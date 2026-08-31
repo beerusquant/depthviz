@@ -1,0 +1,21 @@
+{
+  "name": "depthviz",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Multi-exchange cumulative order book depth visualizer",
+  "scripts": {
+    "start": "node server/index.js",
+    "dev": "node --watch server/index.js"
+  },
+  "dependencies": {
+    "express": "^4.19.2",
+    "ws": "^8.18.0"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "devDependencies": {
+    "playwright": "^1.62.1"
+  }
+}
