@@ -248,6 +248,29 @@ The one exception is a book still accumulating its deep tail after a resync
 (Binance, MEXC, Aster): it says so for its first 60 seconds, because during that
 window the far depth genuinely can only grow.
 
+### Reaching it from a browser, without thinking about it
+
+The service listens on loopback on the VPS, so a browser needs an SSH tunnel.
+Typing one every time is how a tool stops being used, so macOS keeps it up:
+`deploy/dev.depthviz.tunnel.plist` goes in `~/Library/LaunchAgents/`.
+
+```bash
+cp deploy/dev.depthviz.tunnel.plist ~/Library/LaunchAgents/
+launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/dev.depthviz.tunnel.plist
+```
+
+It forwards `8888:127.0.0.1:8888` to `my-vps`, starts at login and, with
+`KeepAlive`, comes back on its own after a network drop, a wake from sleep or a
+kill — verified by killing the process and watching a new pid serve HTTP 200
+twelve seconds later. `ServerAliveInterval=30` / `CountMax=3` is what notices a
+connection that died without closing. Then **`http://127.0.0.1:8888`** always
+works; bookmark it.
+
+Requires a passphrase-less key (or one loaded outside the agent): a LaunchAgent
+has no terminal to prompt on. Remove with
+`launchctl bootout gui/$(id -u)/dev.depthviz.tunnel`, and read
+`~/Library/Logs/depthviz-tunnel.log` if it ever stops.
+
 ## Continuous verification
 
 `npm run checks` runs the unit tests, the stitch tests, the full ccxt
