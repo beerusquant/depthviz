@@ -71,9 +71,14 @@ const samples = [];
 let ob = null, ours = null;
 for (let i = 0; i < reps; i++) {
   if (i) await sleep(gapMs);
-  ours = live;
+  // Our socket book is continuous, ccxt's is a point-in-time REST read, so the
+  // pair is only comparable at one instant. Sampling ours BEFORE the fetch put
+  // the whole request latency into the skew; taking the live book the moment
+  // the response lands puts our read as close to theirs as this can get.
+  const before = live;
   try { ob = await client.fetchOrderBook(csym, clim); }
   catch (e) { if (!samples.length) { console.log(JSON.stringify({ err: e.constructor.name + ': ' + String(e.message).slice(0, 90) })); process.exit(0); } break; }
+  ours = live || before;
   samples.push(sample(ours, ob));
 }
 try { sock.close(); } catch {}
