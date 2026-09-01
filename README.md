@@ -14,6 +14,9 @@ host open upstream connections to six exchanges from *its* IP — on a box that
 also runs trading bots, that is someone else's rate-limit budget. Exposing it is
 therefore deliberate: `HOST=0.0.0.0 PORT=8888 npm start`.
 
+`CLAUDE.md` carries the working rules for this repo — every one of them written
+after something here went wrong, with the measurement that caused it.
+
 ## Stack, and why
 
 - **Backend: Node ESM + `ws` + Express, no build step.** Every exchange here
@@ -271,8 +274,9 @@ this wrong is not subtle in its consequences — it reports all 11 feeds dead
 while the server is perfectly healthy, which is exactly what it used to do
 before it honoured the variable.
 
-`smoke-ui.mjs` needs Chrome (`npm i -D playwright`, then it launches the
-installed `chrome` channel) and writes screenshots to `tools/out/`.
+`smoke-ui.mjs` needs Chrome: playwright is already a devDependency, and it
+drives the `chrome` channel installed on the machine rather than downloading a
+browser. Screenshots land in `tools/out/`.
 
 `crosscheck` samples our live websocket book and a ccxt REST snapshot of the
 same instrument moments apart, then compares cumulative base quantity over the
@@ -281,7 +285,7 @@ would make the deeper feed look like a bug. Contract-denominated venues are
 expected to differ by exactly the contract multiplier (`ctVal`, or `ctVal/price`
 when inverse); anything else is the error. It takes the median of 3 samples by
 default, because one sample is not a verdict. Last full run: **all 9 judged
-instruments agree**, ratios 0.98–1.04. Bitunix is absent from ccxt, so it has no
+instruments agree**, medians 0.94–1.03. Bitunix is absent from ccxt, so it has no
 judge and is reported as *not judged* — a skip is never counted as a pass.
 `verify-bitunix.mjs` substitutes three checks that share no arithmetic with the
 code they test: the 24 h spot volume recomputed from 15-minute candles instead
