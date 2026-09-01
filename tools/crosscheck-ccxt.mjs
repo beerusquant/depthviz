@@ -36,7 +36,11 @@ const VENUES = [
   { ours: ['mexc','spot','BTCUSDT'],            ccxt: ['mexc','BTC/USDT',5000],       reps: 15 },
   { ours: ['mexc','perp','BTC_USDT'],           ccxt: ['mexc','BTC/USDT:USDT',null],  contracts: true },
   { ours: ['coinbase','spot','BTC-USD'],        ccxt: ['coinbaseexchange','BTC/USD',null] },
-  { ours: ['hyperliquid','perp','BTC'],         ccxt: ['hyperliquid','BTC/USDC:USDC',null] },
+  // Judged on the ~±0.025% Hyperliquid's 20 finest levels span — the narrowest
+  // band here. Three samples straddle agreement as a matter of course (p05 0.68
+  // / p95 1.10 on an hourly run), which reads as a failure and is not one, so
+  // this instrument gets a real median like MEXC spot does.
+  { ours: ['hyperliquid','perp','BTC'],         ccxt: ['hyperliquid','BTC/USDC:USDC',null], reps: 15 },
   { ours: ['aster','perp','BTCUSDT'],           ccxt: ['aster','BTC/USDT:USDT',1000] },
   // Lighter's ccxt book is 100 levels (~±0.02% on BTC) against our whole-book
   // stream, so the overlap band is thin and one read moves a lot: sample more.

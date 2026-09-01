@@ -411,6 +411,13 @@ as a dense book should. Hyperliquid is judged on the ~±0.025% its 20 aggregated
 levels span, the narrowest band here and so the noisiest: median **1.003** at
 n = 20, p05 0.70 / p95 1.30.
 
+Hyperliquid needed the same treatment for the same reason, and the hourly timer
+is what surfaced it: judged on the ±0.025% its finest 20 levels span, three
+samples straddled agreement (p05 0.68 / p95 1.10) and the run reported
+INCONCLUSIVE — which exits non-zero, correctly, and would have cried wolf every
+hour. It takes 15 samples now: median **1.005**, and the fix is more evidence,
+not a looser threshold.
+
 Three samples still could not find MEXC spot's median — it read 0.648 on one
 full run — so that instrument alone takes 15 by default. And when a sample's own
 p05..p95 straddles agreement, the run reports **INCONC** rather than FAIL: it has
