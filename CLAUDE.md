@@ -70,6 +70,16 @@ profondeur réelle**. Un trou, pas un arrondi.
   critère a crié au loup (1.0492) alors que le code était exact.
 - `npm run verify:hyperliquid` et `tools/test-stitch.mjs` gardent les deux propriétés.
 
+## 3 ter. Un avertissement permanent n'est plus un avertissement
+
+La note sous le graphe ne s'affiche **que si le carnet n'atteint pas la plage
+demandée** — elle dit alors où il s'arrête vraiment (`book ends at ±0.068% of ±2%`)
+et pourquoi. Avant, la note de venue était affichée à chaque rendu : un encadré
+ambre en permanence sur Hyperliquid, Bitunix et Aster. Un avertissement toujours
+là devient du papier peint, et cesse d'être lu au moment précis où il compte.
+`smoke-ui.mjs` teste les deux sens : Bitunix spot à ±2 % doit crier, Coinbase à
+±2 % doit se taire. Le graphe, lui, ne dessine jamais rien au-delà de la donnée.
+
 ## 4. Ne pas croire un outil sur parole
 
 `smoke-feeds.mjs` a annoncé **les 11 feeds morts** en prod alors que le service était

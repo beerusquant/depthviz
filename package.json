@@ -10,7 +10,8 @@
     "crosscheck": "node tools/crosscheck-ccxt.mjs",
     "test": "node tools/test-book.mjs && node tools/test-stitch.mjs",
     "verify:bitunix": "node tools/verify-bitunix.mjs",
-    "verify:hyperliquid": "node tools/verify-hyperliquid.mjs"
+    "verify:hyperliquid": "node tools/verify-hyperliquid.mjs",
+    "checks": "node tools/run-checks.mjs"
   },
   "dependencies": {
     "express": "^4.19.2",

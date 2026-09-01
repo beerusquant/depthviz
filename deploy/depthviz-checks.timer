@@ -1,0 +1,13 @@
+[Unit]
+Description=depthviz data proofs, hourly
+
+[Timer]
+OnCalendar=hourly
+# Spread the load off the top of the hour: several venues rate-limit by IP and
+# this box also runs trading bots.
+RandomizedDelaySec=600
+Persistent=true
+AccuracySec=1m
+
+[Install]
+WantedBy=timers.target

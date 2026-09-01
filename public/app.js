@@ -53,25 +53,26 @@ function frame() {
 }
 
 function renderNote() {
+  // One rule: say something only when the book does NOT reach the range being
+  // asked for. A caveat shown on every venue at every range is wallpaper — it
+  // stops being read exactly when it starts mattering. When the curve ends
+  // inside the window, nothing is drawn past it and the note says where and
+  // why; when the venue fills the window, the chart speaks for itself.
   const bits = [];
-  const n = exOf(state.exchange)?.notes?.[state.market];
-  if (n) bits.push(n);
-  if (state.exchange === 'bitunix' && state.market === 'spot' && state.range > 0.5) {
-    bits.push(`±${state.range}% is far beyond what Bitunix spot publishes — read the depth numbers as "everything the exchange will show", not as depth to ±${state.range}%`);
-  }
-  // Venues maintained by snapshot + diff only reach past the snapshot's own
-  // span by accumulating updates, so their far depth is a lower bound that
-  // grows with uptime rather than a settled figure. Say so while it is young.
-  const acc = state.book?.accum;
-  if (acc?.since && state.range > 0.6) {
-    const secs = Math.max(0, Math.round((Date.now() - acc.since) / 1000));
-    if (secs < 180) {
-      bits.push(`depth beyond ±0.6% is still converging — built from ${secs < 60 ? `${secs}s` : `${Math.floor(secs / 60)}m${secs % 60}s`} of updates, so it can only grow`);
-    }
-  }
   const m = state.metrics;
   if (m && (m.shortBid || m.shortAsk)) {
-    bits.push(`book stops before ±${state.range}% on ${m.shortBid && m.shortAsk ? 'both sides' : m.shortBid ? 'the bid side' : 'the ask side'} — the curve ends where the exchange's data ends`);
+    const at = (r) => `${r.toFixed(r < 1 ? 3 : 2)}%`;
+    const where = m.shortBid && m.shortAsk
+      ? `±${at(Math.max(m.bid.reach, m.ask.reach))}`
+      : m.shortBid ? `-${at(m.bid.reach)} on the bid side` : `+${at(m.ask.reach)} on the ask side`;
+    bits.push(`book ends at ${where} of ±${state.range}% — the exchange publishes nothing further, so nothing is drawn there`);
+    const n = exOf(state.exchange)?.notes?.[state.market];
+    if (n) bits.push(n);
+  } else if (state.book?.accum?.since && state.range > 0.6) {
+    // A book that only reaches past its snapshot by accumulating diffs is a
+    // lower bound while it is young. Said once, briefly, then it goes away.
+    const secs = Math.round((Date.now() - state.book.accum.since) / 1000);
+    if (secs < 60) bits.push(`depth beyond ±0.6% is still filling in — ${secs}s of updates so far, so it can only grow`);
   }
   const el = $('note');
   el.textContent = bits.join(' · ');

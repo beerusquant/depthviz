@@ -230,6 +230,46 @@ reachable from the internet; get to it with
 `ssh -L 8888:127.0.0.1:8888 my-vps` and open `http://127.0.0.1:8888`.
 devDependencies are installed there too, so all four checks run in place.
 
+## The note line, and when it appears
+
+The chart draws nothing past where the venue's data ends — the cumulative curve
+simply stops. The one-line note under the chart says so **only when that
+happens**: when the book cannot reach the selected range, it names where it
+actually ends (`book ends at ±0.068% of ±2%`) and appends the venue's reason.
+When the venue fills the window it says nothing at all.
+
+That is a deliberate reversal. It used to print the venue's caveat on every
+render — an amber box that was on screen at every range on Hyperliquid, Bitunix
+and Aster. A warning shown constantly is wallpaper: it stops being read exactly
+when it starts mattering. `smoke-ui.mjs` now asserts both directions — Bitunix
+spot at ±2% must warn, Coinbase at ±2% must stay silent.
+
+The one exception is a book still accumulating its deep tail after a resync
+(Binance, MEXC, Aster): it says so for its first 60 seconds, because during that
+window the far depth genuinely can only grow.
+
+## Continuous verification
+
+`npm run checks` runs the unit tests, the stitch tests, the full ccxt
+crosscheck, `verify-bitunix` and `verify-hyperliquid` in one go, appends a
+one-line verdict to `logs/checks.log`, and exits non-zero if anything failed.
+
+On the VPS it runs hourly from `deploy/depthviz-checks.{service,timer}`
+(`RandomizedDelaySec=600`, so it does not hit six venues at the top of every
+hour from an IP that also runs trading bots). The point is not the passing runs:
+an exchange can change a field or a contract multiplier overnight, the chart
+stays beautiful, and the numbers are silently wrong by a factor of a hundred —
+which is precisely how the OKX contract-size bug survived. Reading it:
+
+```bash
+systemctl list-timers depthviz-checks      # when it last ran, when it runs next
+tail -5 /opt/depthviz/logs/checks.log   # one verdict line per run
+journalctl -u depthviz-checks -n 200       # the full output of the last runs
+```
+
+The unit `Requires=depthviz.service`: with the app down the checks measure
+nothing, and "not judged" must never read as a pass.
+
 ## Adding an exchange
 
 Drop a module in `server/adapters/` exporting
@@ -276,6 +316,7 @@ npm test                           # BookSide.applySnapshot resync semantics, no
 npm run crosscheck                 # tools/crosscheck-ccxt.mjs: ccxt as an independent second opinion (server must be up)
 npm run crosscheck -- mexc --repeat 20   # sample one venue repeatedly and report the ratio distribution
 npm run verify:bitunix             # the venue ccxt cannot judge, checked against itself and its peers
+npm run checks                     # every proof above in one run, for a timer; non-zero if any fails
 ```
 
 No tool hardcodes a port. The three websocket-backed ones take `DEPTHVIZ_URL`

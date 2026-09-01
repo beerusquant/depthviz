@@ -75,6 +75,25 @@ console.log('coinbase/spot     ', JSON.stringify(await info()));
 await p.mouse.move(1100, 600); await p.waitForTimeout(300);
 await p.screenshot({ path: 'tools/out/s_coinbase.png' });
 
+// The note is now a truncation signal, not a venue blurb: it must appear when
+// the book cannot reach the selected range, and stay silent when it can.
+{
+  await pickEx('Bitunix');
+  const short = await info();
+  console.log('bitunix/spot ±2%   ', JSON.stringify(short));
+  if (!short.note) errs.push('NOTE: bitunix spot at ±2% should warn that the book ends far short');
+  await p.click('#range .seg-b[data-range="0.1"]');
+  await p.waitForTimeout(3000);
+  const fits = await info();
+  console.log('  same book ±0.1%  ', JSON.stringify(fits));
+  await p.click('#range .seg-b[data-range="2"]');
+  await p.waitForTimeout(3000);
+  await pickEx('Coinbase');
+  const full = await info();
+  console.log('coinbase/spot ±2%  ', JSON.stringify(full));
+  if (full.note) errs.push(`NOTE: coinbase reaches ±2%, it should say nothing — got "${full.note}"`);
+}
+
 // copy + png
 await p.context().grantPermissions(['clipboard-read', 'clipboard-write']);
 await p.click('#copy'); await p.waitForTimeout(400);
