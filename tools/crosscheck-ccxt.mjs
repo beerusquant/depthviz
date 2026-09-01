@@ -31,7 +31,9 @@ const VENUES = [
   { ours: ['okx','perp','BTC-USD-SWAP'],        ccxt: ['okx','BTC/USD:BTC',5000],      contracts: true },
   { ours: ['binance','spot','BTCUSDT'],         ccxt: ['binance','BTC/USDT',5000] },
   { ours: ['binance','perp','BTCUSDT'],         ccxt: ['binanceusdm','BTC/USDT:USDT',1000] },
-  { ours: ['mexc','spot','BTCUSDT'],            ccxt: ['mexc','BTC/USDT',5000] },
+  // MEXC spot's book inside ±0.5% is thin enough that a single read swings ~2x;
+  // three samples cannot find its median, so it gets more.
+  { ours: ['mexc','spot','BTCUSDT'],            ccxt: ['mexc','BTC/USDT',5000],       reps: 15 },
   { ours: ['mexc','perp','BTC_USDT'],           ccxt: ['mexc','BTC/USDT:USDT',null],  contracts: true },
   { ours: ['coinbase','spot','BTC-USD'],        ccxt: ['coinbaseexchange','BTC/USD',null] },
   { ours: ['hyperliquid','perp','BTC'],         ccxt: ['hyperliquid','BTC/USDC:USDC',null] },
@@ -97,7 +99,8 @@ process.exit(0);
 `;
 
 const run = (v) => new Promise((res) => {
-  const args = [...v.ours, ...v.ccxt.map(String), String(!!v.contracts), SERVER, String(BAND), String(SETTLE_MS), String(REPS), String(GAP_MS)];
+  const reps = ri >= 0 ? REPS : Math.max(REPS, v.reps || 0);
+  const args = [...v.ours, ...v.ccxt.map(String), String(!!v.contracts), SERVER, String(BAND), String(SETTLE_MS), String(reps), String(GAP_MS)];
   const p = spawn(process.execPath, ['--input-type=module', '-e', CHILD, '--', ...args],
     { cwd: process.env.CCXT_DIR || process.cwd(), stdio: ['ignore', 'pipe', 'pipe'] });
   let out = '', errOut = '';
@@ -120,7 +123,7 @@ const GAP_MS = ri >= 0 ? 8000 : 4000;
 const only = argv.find((a) => !a.startsWith('--') && a !== String(REPS));
 const list = only ? VENUES.filter((v) => v.ours[0] === only) : VENUES;
 console.log(`ccxt cross-check — band ±${BAND}% of mid, our live ws vs a ccxt REST snapshot\n`);
-let bad = 0, ok = 0, skipped = 0;
+let bad = 0, ok = 0, skipped = 0, inconclusive = 0;
 for (const v of list) {
   const tag = `${v.ours[0]}/${v.ours[1]} ${v.ours[2]}`.padEnd(29);
   const r = await run(v);
@@ -136,16 +139,22 @@ for (const v of list) {
   const rel = (r.n > 1 ? r.med : r.qty) / expect;
   const okMid = Math.abs(midOff) < 0.05;
   const okQty = r.n > 1 ? rel > 0.93 && rel < 1.08 : rel > 0.85 && rel < 1.18;
-  if (okMid && okQty) ok++; else bad++;
+  // A wide sample whose own p05..p95 straddles agreement has not found a
+  // disagreement — it has failed to measure one. Saying FAIL there trains the
+  // reader to ignore the tool, so that case is reported as its own outcome.
+  const straddles = r.n > 1 && r.lo / expect <= 1 && r.hi / expect >= 1;
+  const verdict = okMid && okQty ? 'OK  ' : straddles ? 'INCONC' : 'FAIL';
+  if (verdict === 'OK  ') ok++; else if (verdict === 'FAIL') bad++; else inconclusive++;
   const note = r.contracts ? `  [ccxt ships raw contracts; contractSize=${r.size}${r.inverse ? ' USD, inverse' : ''}]` : '';
   const dist = r.n > 1
     ? ` | n=${r.n} median ${(r.med / expect).toFixed(3)} p05 ${(r.lo / expect).toFixed(3)} p95 ${(r.hi / expect).toFixed(3)}`
     : '';
-  console.log(`${tag} ${okMid && okQty ? 'OK  ' : 'FAIL'}  mid ${midOff >= 0 ? '+' : ''}${midOff.toFixed(4)}%` +
+  console.log(`${tag} ${verdict}  mid ${midOff >= 0 ? '+' : ''}${midOff.toFixed(4)}%` +
     ` | ${r.n > 1 ? 'median' : 'qty'} ratio ${rel.toFixed(3)}${dist}` +
     ` | judged on ±${r.w.toFixed(3)}% (our reach ±${r.reach1.toFixed(2)}%, ccxt ±${r.reach2.toFixed(2)}%)${note}`);
 }
-console.log(`\n${ok} agree, ${bad} disagree, ${skipped} not judged` +
-  ` (bitunix is absent from ccxt entirely, so it never has a judge).`);
-// A skip is an absence of evidence, never a pass.
-process.exit(bad === 0 && skipped === 0 ? 0 : 1);
+console.log(`\n${ok} agree, ${bad} disagree, ${inconclusive} inconclusive, ${skipped} not judged` +
+  ` (bitunix is absent from ccxt entirely, so it never has a judge).` +
+  (inconclusive ? `\nInconclusive means the samples straddle agreement, not that we differ — re-run with --repeat 20.` : ''));
+// Neither a skip nor an inconclusive result is a pass: both are missing evidence.
+process.exit(bad === 0 && skipped === 0 && inconclusive === 0 ? 0 : 1);

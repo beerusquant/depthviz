@@ -254,3 +254,10 @@ moving, not our sizes. MEXC perp lands at median 1.000 with p05 0.99 / p95 1.08,
 as a dense book should. Hyperliquid is judged on the ~±0.025% its 20 aggregated
 levels span, the narrowest band here and so the noisiest: median **1.003** at
 n = 20, p05 0.70 / p95 1.30.
+
+Three samples still could not find MEXC spot's median — it read 0.648 on one
+full run — so that instrument alone takes 15 by default. And when a sample's own
+p05..p95 straddles agreement, the run reports **INCONC** rather than FAIL: it has
+failed to measure a disagreement, which is not the same as finding one. Neither
+an inconclusive nor a skipped venue counts as a pass, and either makes the run
+exit non-zero.
