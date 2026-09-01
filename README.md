@@ -220,6 +220,10 @@ npm run crosscheck -- mexc --repeat 20   # sample one venue repeatedly and repor
 npm run verify:bitunix             # the venue ccxt cannot judge, checked against itself and its peers
 ```
 
+All three server-backed tools take `DEPTHVIZ_URL` (default
+`ws://127.0.0.1:8787/ws`); the deployed service listens on 8888, so point them
+at it: `DEPTHVIZ_URL=ws://127.0.0.1:8888/ws node tools/smoke-feeds.mjs`.
+
 `smoke-ui.mjs` needs Chrome (`npm i -D playwright`, then it launches the
 installed `chrome` channel) and writes screenshots to `tools/out/`.
 
