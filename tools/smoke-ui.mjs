@@ -37,6 +37,42 @@ const pickSym = async (q) => {
 };
 
 await p.waitForTimeout(5000);
+
+// A listing name is chosen by whoever lists the token. Serve one that is a
+// script and prove the page renders it as text: the symbol menu builds rows
+// from exchange strings, and it must never parse them as markup.
+{
+  const PAYLOAD = '<img src=x onerror="window.__xss=1">';
+  await p.route('**/api/symbols*', async (route) => {
+    const res = await route.fetch();
+    const j = await res.json();
+    j.symbols = [{ s: PAYLOAD, d: `${PAYLOAD}/USDT`, base: PAYLOAD, quote: 'USDT' }, ...j.symbols];
+    j.count = j.symbols.length;
+    await route.fulfill({ response: res, json: j });
+  });
+  await p.reload({ waitUntil: 'networkidle' });
+  await p.waitForTimeout(2500);
+  await p.click('#sym-input');
+  await p.fill('#sym-input', 'img');
+  await p.waitForTimeout(400);
+  const seen = await p.evaluate(() => {
+    const row = document.querySelector('#sym-menu .menu-i');
+    return {
+      xss: window.__xss === 1,
+      injected: document.querySelectorAll('#sym-menu img').length,
+      text: row ? row.firstChild.textContent : '(no row)',
+    };
+  });
+  console.log('hostile listing   ', JSON.stringify(seen));
+  if (seen.xss) errs.push('XSS: an exchange-supplied symbol executed script in the page');
+  if (seen.injected) errs.push(`XSS: an exchange-supplied symbol created ${seen.injected} <img> node(s)`);
+  if (!seen.text.startsWith('<img')) errs.push(`XSS: the hostile name was not rendered verbatim as text (got "${seen.text}")`);
+  await p.keyboard.press('Escape');
+  await p.unroute('**/api/symbols*');
+  await p.reload({ waitUntil: 'networkidle' });
+  await p.waitForTimeout(5000);
+}
+
 console.log('binance/spot      ', JSON.stringify(await info()));
 console.log('  search RAY ->', await pickSym('RAY'));
 console.log('  after         ', JSON.stringify(await info()));

@@ -120,17 +120,17 @@ sur-déclarer est pire que sous-déclarer. Couvert par `npm test`, sans réseau.
 ## 7. Exposition et déploiement
 
 - **L'app n'a aucune authentification, et chaque visiteur fait ouvrir au host des
-  connexions vers six exchanges depuis son IP.** Cette IP est celle sur laquelle a live trading bot
-  est whitelisté chez OKX : un inconnu qui enchaîne les symboles dépense le budget de
-  rate limit d'un bot qui trade en live. `HOST` vaut donc `127.0.0.1` par défaut et
-  l'exposition est un choix explicite.
-- **Déploiement par patch, jamais par rsync ni écrasement.** `/opt/depthviz` sur
-  `my-vps` n'est pas un checkout git. Un patch qui ne s'applique pas t'apprend que la
-  cible a dérivé — un écrasement détruit cette information.
+  connexions vers huit exchanges depuis son IP.** Sur une machine qui fait tourner
+  autre chose, c'est le budget de rate limit de quelqu'un d'autre qu'un inconnu
+  dépense en enchaînant les symboles — et une IP whitelistée chez un exchange vaut
+  cher. `HOST` vaut donc `127.0.0.1` par défaut et l'exposition est un choix explicite.
+- **Déploiement par patch, jamais par rsync ni écrasement.** Le dossier déployé n'est
+  pas un checkout git. Un patch qui ne s'applique pas t'apprend que la cible a
+  dérivé — un écrasement détruit cette information.
 - **Après déploiement, comparer les hashes fichier par fichier.** Un service qui démarre
   ne prouve pas que le bon code tourne.
 - **Chercher sur toute la flotte avant de dire « pas déployé ».** J'ai conclu deux fois
-  que depthviz était absent en cherchant `/opt/depthviz` et le port 8787 : les deux
+  que depthviz était absent en cherchant un chemin supposé et le port de dev : les deux
   étaient faux. Balayer par `find -iname` et `systemctl list-unit-files`.
 
 ## 8. Preuves attendues

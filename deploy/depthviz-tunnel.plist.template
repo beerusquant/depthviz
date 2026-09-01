@@ -2,7 +2,7 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
-  <key>Label</key><string>dev.depthviz.tunnel</string>
+  <key>Label</key><string>@LABEL@</string>
   <key>ProgramArguments</key>
   <array>
     <string>/usr/bin/ssh</string>
@@ -11,13 +11,13 @@
     <string>-o</string><string>ServerAliveInterval=30</string>
     <string>-o</string><string>ServerAliveCountMax=3</string>
     <string>-o</string><string>BatchMode=yes</string>
-    <string>-L</string><string>8888:127.0.0.1:8888</string>
-    <string>my-vps</string>
+    <string>-L</string><string>@PORT@:127.0.0.1:@REMOTE_PORT@</string>
+    <string>@SSH_HOST@</string>
   </array>
   <key>RunAtLoad</key><true/>
   <key>KeepAlive</key><true/>
   <key>ThrottleInterval</key><integer>10</integer>
-  <key>StandardOutPath</key><string>$HOME/Library/Logs/depthviz-tunnel.log</string>
-  <key>StandardErrorPath</key><string>$HOME/Library/Logs/depthviz-tunnel.log</string>
+  <key>StandardOutPath</key><string>@HOME@/Library/Logs/depthviz-tunnel.log</string>
+  <key>StandardErrorPath</key><string>@HOME@/Library/Logs/depthviz-tunnel.log</string>
 </dict>
 </plist>

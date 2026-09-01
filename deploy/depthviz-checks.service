@@ -7,9 +7,10 @@ Requires=depthviz.service
 
 [Service]
 Type=oneshot
+# Adjust to wherever the app is installed on your host.
 WorkingDirectory=/opt/depthviz
 Environment=DEPTHVIZ_URL=ws://127.0.0.1:8888/ws
-ExecStart=node tools/run-checks.mjs
+ExecStart=/usr/bin/env node tools/run-checks.mjs
 User=root
 # Full ccxt crosscheck plus the two venue-specific suites; well under an hour,
 # but never let a hung exchange socket overlap the next run.

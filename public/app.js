@@ -179,14 +179,33 @@ function selectSymbol(s) {
 function closeMenu(el) { el.classList.remove('open'); }
 function closeAll() { document.querySelectorAll('.menu').forEach(closeMenu); }
 
+/**
+ * A menu row: a label and a dim raw value, both written as TEXT.
+ *
+ * Symbol names are chosen by whoever lists the token, not by us — 27 of the
+ * 10 250 pairs served today already carry names outside plain ASCII
+ * (`币安人生/USDT`, `GOLD(PAXG)/USDC`). Interpolating those into markup makes
+ * the listing form a script tag away from running in the viewer's page, so
+ * nothing from an exchange is ever parsed as HTML here.
+ */
+function menuRow(label, raw) {
+  const d = document.createElement('div');
+  const a = document.createElement('span');
+  a.textContent = label;
+  const b = document.createElement('span');
+  b.className = 'raw';
+  b.textContent = raw;
+  d.append(a, b);
+  return d;
+}
+
 function renderExchangeMenu() {
   const el = $('ex-menu');
-  el.innerHTML = '';
+  el.replaceChildren();
   for (const c of state.catalog) {
     const ok = c.markets.includes(state.market);
-    const d = document.createElement('div');
+    const d = menuRow(c.name, c.markets.map((m) => c.transport[m]).join('/'));
     d.className = `menu-i${ok ? '' : ' disabled'}${c.id === state.exchange ? ' sel' : ''}`;
-    d.innerHTML = `<span>${c.name}</span><span class="raw">${c.markets.map((m) => c.transport[m]).join('/')}</span>`;
     if (ok) d.onclick = () => { setExchange(c.id); closeMenu(el); };
     el.appendChild(d);
   }
@@ -224,14 +243,16 @@ function renderSymbolMenu(q = '') {
     scored.sort((a, b) => a[0] - b[0] || a[1].d.localeCompare(b[1].d));
     hits = scored.slice(0, 400).map((x) => x[1]);
   }
-  el.innerHTML = '';
+  el.replaceChildren();
   if (!hits.length) {
-    el.innerHTML = '<div class="menu-empty">no match</div>';
+    const empty = document.createElement('div');
+    empty.className = 'menu-empty';
+    empty.textContent = 'no match';
+    el.appendChild(empty);
   } else {
     for (const s of hits) {
-      const d = document.createElement('div');
+      const d = menuRow(s.d, s.s);
       d.className = `menu-i${s.s === state.symbol ? ' sel' : ''}`;
-      d.innerHTML = `<span>${s.d}</span><span class="raw">${s.s}</span>`;
       d.onmousedown = (e) => { e.preventDefault(); selectSymbol(s); };
       el.appendChild(d);
     }
@@ -267,7 +288,7 @@ function setRange(r) {
 
 function applyTheme() {
   document.documentElement.dataset.theme = state.theme;
-  $('theme').innerHTML = state.theme === 'dark' ? '&#9728;' : '&#9789;';
+  $('theme').textContent = state.theme === 'dark' ? '\u2600' : '\u263D';
   invalidate();
 }
 
@@ -351,8 +372,6 @@ $('png').onclick = () => {
   a.click();
   toast('PNG exported');
 };
-
-$('back').onclick = () => toast('back — no parent view in this build');
 
 canvas.addEventListener('mousemove', (e) => {
   const r = canvas.getBoundingClientRect();
