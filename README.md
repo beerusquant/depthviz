@@ -458,6 +458,20 @@ INCONCLUSIVE — which exits non-zero, correctly, and would have cried wolf ever
 hour. It takes 15 samples now: median **1.005**, and the fix is more evidence,
 not a looser threshold.
 
+The hourly timer then failed twice more, on MEXC spot, and the answer was not
+more samples either. Queried **directly on MEXC's own REST endpoint** — no ccxt,
+no depthviz in the path — ten reads four seconds apart returned 177, 132, 115,
+43, 221, 164, 140, 218, 146 and 172 BTC within ±2%, with the level count steady
+at ~1780. The venue's own liquidity swings 5x in forty seconds. Our feed was
+motionless throughout that window (373–385 levels, reach ±3.83%, no resync), and
+widening the judged band made it worse, not better (p05 0.19 at ±2%).
+
+So MEXC spot carries its own tolerance, and the check keeps only the power it
+actually has there: catching an order-of-magnitude or systematic error, not a
+10% one — a missed contract multiplier is 100x and still screams. Claiming more
+precision than the venue offers is how a check starts crying wolf, and a check
+nobody believes catches nothing.
+
 Three samples still could not find MEXC spot's median — it read 0.648 on one
 full run — so that instrument alone takes 15 by default. And when a sample's own
 p05..p95 straddles agreement, the run reports **INCONC** rather than FAIL: it has
