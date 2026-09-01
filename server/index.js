@@ -8,6 +8,11 @@ import { subscribe, stats } from './hub.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PORT = process.env.PORT || 8787;
+// Loopback by default: depthviz has no authentication, and every viewer makes
+// this host open upstream connections to six exchanges from its own IP — on a
+// box that also runs trading bots, that is someone else's rate-limit budget.
+// Exposing it is therefore opt-in: set HOST=0.0.0.0 deliberately.
+const HOST = process.env.HOST || '127.0.0.1';
 
 const app = express();
 app.use(express.static(path.join(__dirname, '..', 'public')));
@@ -57,4 +62,4 @@ wss.on('connection', (ws) => {
   ws.on('error', detach);
 });
 
-server.listen(PORT, () => console.log(`depthviz listening on http://localhost:${PORT}`));
+server.listen(PORT, HOST, () => console.log(`depthviz listening on http://${HOST}:${PORT}`));
