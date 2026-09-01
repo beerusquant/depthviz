@@ -1,0 +1,19 @@
+#!/bin/zsh
+# Open depthviz in the browser, and make sure the tunnel that serves it is up.
+# The LaunchAgent normally holds it; this covers the case where it was stopped,
+# or the Mac just woke and ssh has not noticed the dead socket yet.
+URL="http://127.0.0.1:8888"
+AGENT="dev.depthviz.tunnel"
+alive() { /usr/bin/curl -s -o /dev/null --max-time 3 "$URL/api/feeds"; }
+
+if ! alive; then
+  /bin/launchctl kickstart -k "gui/$(id -u)/$AGENT" 2>/dev/null \
+    || /bin/launchctl bootstrap "gui/$(id -u)" "$HOME/Library/LaunchAgents/$AGENT.plist" 2>/dev/null
+  for i in {1..15}; do alive && break; /bin/sleep 1; done
+fi
+
+if alive; then
+  /usr/bin/open "$URL"
+else
+  /usr/bin/osascript -e 'display alert "Depthviz unreachable" message "The SSH tunnel to my-vps would not come up. Check ~/Library/Logs/depthviz-tunnel.log, or that the VPS is reachable." as critical'
+fi

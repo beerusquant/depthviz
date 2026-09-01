@@ -266,6 +266,13 @@ twelve seconds later. `ServerAliveInterval=30` / `CountMax=3` is what notices a
 connection that died without closing. Then **`http://127.0.0.1:8888`** always
 works; bookmark it.
 
+`deploy/Depthviz.app` is the same thing as one click: copy it to
+`~/Applications` and it shows up in Spotlight, so ⌘-Space → "depth" → Enter
+opens the chart. It checks the tunnel first and, if the agent was stopped or the
+Mac has just woken, restarts it and waits before opening the browser — from a
+fully torn-down state it takes ~5 s. It says so in an alert rather than opening
+a dead page when the VPS itself is unreachable.
+
 Requires a passphrase-less key (or one loaded outside the agent): a LaunchAgent
 has no terminal to prompt on. Remove with
 `launchctl bootout gui/$(id -u)/dev.depthviz.tunnel`, and read
