@@ -42,14 +42,14 @@ therefore deliberate: `HOST=0.0.0.0 PORT=8888 npm start`.
 
 ## Exchange coverage (all verified live)
 
-| Exchange | Spot | Perp | Transport | Levels seen on BTC | Notes |
+| Exchange | Spot | Perp | Transport | Levels / reach on BTC | Notes |
 |---|---|---|---|---|---|
-| OKX | 1 385 | 458 | **WS** `books` (incremental, seq-checked) + REST `books-full` tail @1s | 5 000/5 000 | SWAP sizes are contracts; linear → `ctVal*ctMult`, inverse → `ctVal*ctMult/price` |
-| Binance | 1 358 | 568 | **WS** diff depth @100ms + REST snapshot | 5 000 / 1 000 | canonical U/u (spot) and `pu` (futures) resync algorithm |
-| MEXC | 1 974 | 1 120 | **WS** protobuf (spot) + **WS** JSON (perp), REST snapshot | 2 000 / 1 500 | contract sizes converted via `contractSize`; 8s poll watchdog behind both |
-| Bitunix | 844 | 732 | REST poll 1s (spot) / **WS** `depth_books` (perp) | 50 / 15 600 | spot book is capped by the exchange, see tradeoffs |
-| Hyperliquid | 326 | 177 | **WS** `l2Book` ×3 stitched | ~55 / ~55 | three parallel `nSigFigs` layers, see tradeoffs |
-| Coinbase | 521 | — | **WS** `level2_batch` (snapshot + updates) | ~22 000 | spot only; the PERP option greys it out |
+| OKX | 1 385 | 458 | **WS** `books` (incremental, seq-checked) + REST `books-full` tail @1s | 5 000 lv, ±1.3% | SWAP sizes are contracts; linear → `ctVal*ctMult`, inverse → `ctVal*ctMult/price` |
+| Binance | 1 358 | 569 | **WS** diff depth @100ms + REST snapshot | 5 000 / 1 300 lv, **±10%** | canonical U/u (spot) and `pu` (futures) resync algorithm |
+| MEXC | 1 982 | 1 129 | **WS** protobuf (spot) + **WS** JSON (perp), REST snapshot | 2 000 / 1 500 lv, ±5% / ±3% | contract sizes converted via `contractSize`; 8s poll watchdog behind both |
+| Bitunix | 844 | 735 | REST poll 1s (spot) / **WS** `depth_books` (perp) | 50 lv ±0.05% / 16 000 lv **±12%** | spot book is capped by the exchange, see tradeoffs |
+| Hyperliquid | 326 | 177 | **WS** `l2Book` ×3 stitched | ~55 lv, **±11%** | three parallel `nSigFigs` layers, see tradeoffs |
+| Coinbase | 521 | — | **WS** `level2_batch` (snapshot + updates) | ~22 000 lv, whole book | spot only; the PERP option greys it out |
 
 Bitunix spot 24h volume is not a ticker read: the venue publishes no spot
 ticker at all (every `/market/ticker*` path 404s), so it is summed from hourly
@@ -57,9 +57,14 @@ candles over a rolling 24h window, valuing each candle at its own close and
 weighting the boundary candle by its overlap. That restored a real number
 (~$125M on BTC/USDT) where the panel previously read `n/a`.
 
-Symbol lists are fetched from each venue's own instruments endpoint at request
-time (5-minute cache), filtered to the selected market type, and the live pair
-count is shown next to the search box.
+Pair counts are a **snapshot taken 2026-09-01** and drift daily as venues list
+and delist — the app never uses them. Symbol lists are fetched from each venue's
+own instruments endpoint at request time (5-minute cache), filtered to the
+selected market type, and the live count is shown next to the search box.
+
+Reach is what the chart can actually draw, not the snapshot size: Binance's and
+MEXC's books grow past their capped snapshots by applying diffs (tradeoff 4), so
+they are quoted at the reach a settled feed holds, not at the REST limit.
 
 ## Tradeoffs I had to make
 
@@ -200,13 +205,52 @@ driven by real connection state (`connecting` / `live` / `reconnecting` /
 `error` / `offline`) · theme toggle · COPY (panel text + JSON to clipboard) ·
 PNG export.
 
+## Deployment
+
+It runs on the Tokyo VPS (ssh alias `my-vps`) as `depthviz.service`, from
+`/opt/depthviz` with `PORT=8888` and node at `node`. That
+directory is **not a git checkout**: deploys are a `git diff` of the local
+commits, copied over and applied with `git apply`, then `systemctl restart
+depthviz` and a look at `journalctl -u depthviz`. Never rsync the tree — a patch
+that does not apply is telling you the target has drifted, which is information
+an overwrite destroys. After deploying, confirm the tree matches the commit by
+comparing per-file hashes rather than assuming.
+
+The service listens on loopback and ufw carries no rule for 8888, so it is not
+reachable from the internet; get to it with
+`ssh -L 8888:127.0.0.1:8888 my-vps` and open `http://127.0.0.1:8888`.
+devDependencies are installed there too, so all four checks run in place.
+
 ## Adding an exchange
 
 Drop a module in `server/adapters/` exporting
-`{ id, name, markets, transport, listSymbols(market), vol24h(market, s), open(market, s, opts, emit, status) }`
-and register it in `server/adapters/index.js`. `open` returns `{ close() }` and
-pushes `{ bids, asks, ts, source }` with sizes in base units, bids descending,
-asks ascending. The UI needs no changes.
+
+```js
+{
+  id, name,
+  markets,            // ['spot', 'perp']
+  transport,          // { spot: 'ws' | 'poll', perp: ... } — shown in the panel
+  notes,              // optional { spot?: string, perp?: string }, surfaced in the UI note line
+  listSymbols(market),                  // -> [{ s, d, base, quote }]
+  vol24h(market, s),                    // -> quote-denominated number | null
+  open(market, s, opts, emit, status),  // may be async; -> { close() }
+}
+```
+
+and register it in `server/adapters/index.js`. `open` may return a promise (OKX
+and MEXC do — they need contract sizes first) and resolves to `{ close() }`. It
+pushes
+
+```js
+emit({ bids, asks, ts, source, accum, drift })
+```
+
+with sizes in **base units**, bids descending, asks ascending. `source` is
+`'ws'` or `'poll'` and drives the panel's transport label. The last two are
+optional: `accum: { since }` marks a book that only reaches past its snapshot by
+accumulating diffs, so the UI can say the far depth is still converging
+(tradeoff 7); `drift` is a 0..1 disagreement between two transports of the same
+venue, where one exists (tradeoff 8). The UI needs no changes.
 
 ## Smoke tests
 
@@ -215,14 +259,17 @@ node tools/smoke-feeds.mjs         # subscribes to all 11 exchange/market combos
 node tools/smoke-ui.mjs            # drives the real page in Chrome: every venue, search, range, copy, PNG
 node tools/verify-conversions.mjs  # re-runs the unit-conversion cross-checks above against live data
 npm test                           # BookSide.applySnapshot resync semantics, no network
-npm run crosscheck                 # ccxt as an independent second opinion on the live book (server must be up)
+npm run crosscheck                 # tools/crosscheck-ccxt.mjs: ccxt as an independent second opinion (server must be up)
 npm run crosscheck -- mexc --repeat 20   # sample one venue repeatedly and report the ratio distribution
 npm run verify:bitunix             # the venue ccxt cannot judge, checked against itself and its peers
 ```
 
 All three server-backed tools take `DEPTHVIZ_URL` (default
 `ws://127.0.0.1:8787/ws`); the deployed service listens on 8888, so point them
-at it: `DEPTHVIZ_URL=ws://127.0.0.1:8888/ws node tools/smoke-feeds.mjs`.
+at it: `DEPTHVIZ_URL=ws://127.0.0.1:8888/ws node tools/smoke-feeds.mjs`. Getting
+this wrong is not subtle in its consequences — it reports all 11 feeds dead
+while the server is perfectly healthy, which is exactly what it used to do
+before it honoured the variable.
 
 `smoke-ui.mjs` needs Chrome (`npm i -D playwright`, then it launches the
 installed `chrome` channel) and writes screenshots to `tools/out/`.
