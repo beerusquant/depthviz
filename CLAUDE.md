@@ -52,8 +52,9 @@ contrats, le ratio **attendu est le multiplicateur, pas 1**.
 `smoke-feeds.mjs` a annoncé **les 11 feeds morts** en prod alors que le service était
 sain : il visait un port codé en dur. Deux conséquences durables :
 
-- **Tout outil qui parle au serveur lit `DEPTHVIZ_URL`** (défaut `ws://127.0.0.1:8787/ws`).
-  Contre la prod : `DEPTHVIZ_URL=ws://127.0.0.1:8888/ws`.
+- **Aucun outil ne code un port en dur.** Les trois qui passent par le websocket lisent
+  `DEPTHVIZ_URL` (défaut `ws://127.0.0.1:8787/ws`), `smoke-ui.mjs` lit `DEPTHVIZ_HTTP`
+  (défaut `http://127.0.0.1:8787`). Contre la prod : port 8888.
 - **Une erreur de connexion doit nommer l'URL réellement tentée.** Sans ça, un échec de
   configuration se lit comme une panne applicative.
 

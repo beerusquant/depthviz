@@ -1,10 +1,17 @@
 import { chromium } from 'playwright';
+// Same rule as the other tools: never hardcode the port. The deployed service
+// listens on 8888, and a tool pointed at nothing reports a broken app rather
+// than a misconfigured tool.
+const BASE = process.env.DEPTHVIZ_HTTP || 'http://127.0.0.1:8787';
 const b = await chromium.launch({ channel: 'chrome' });
 const p = await b.newPage({ viewport: { width: 1500, height: 900 }, deviceScaleFactor: 2 });
 const errs = [];
 p.on('console', m => { if (m.type() === 'error') errs.push('CONSOLE: ' + m.text()); });
 p.on('pageerror', e => errs.push('PAGEERROR: ' + e.message));
-await p.goto('http://localhost:8787/', { waitUntil: 'networkidle' });
+await p.goto(`${BASE}/`, { waitUntil: 'networkidle' }).catch((e) => {
+  console.error(`could not load ${BASE} — is the server up? (${e.message.split('\n')[0]})`);
+  process.exit(1);
+});
 
 const info = () => p.evaluate(() => ({
   ex: document.getElementById('ex-label').textContent,

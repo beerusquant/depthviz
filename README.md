@@ -267,9 +267,10 @@ npm run crosscheck -- mexc --repeat 20   # sample one venue repeatedly and repor
 npm run verify:bitunix             # the venue ccxt cannot judge, checked against itself and its peers
 ```
 
-All three server-backed tools take `DEPTHVIZ_URL` (default
-`ws://127.0.0.1:8787/ws`); the deployed service listens on 8888, so point them
-at it: `DEPTHVIZ_URL=ws://127.0.0.1:8888/ws node tools/smoke-feeds.mjs`. Getting
+No tool hardcodes a port. The three websocket-backed ones take `DEPTHVIZ_URL`
+(default `ws://127.0.0.1:8787/ws`) and `smoke-ui.mjs` takes `DEPTHVIZ_HTTP`
+(default `http://127.0.0.1:8787`); the deployed service listens on 8888, so
+point them at it: `DEPTHVIZ_URL=ws://127.0.0.1:8888/ws node tools/smoke-feeds.mjs`. Getting
 this wrong is not subtle in its consequences — it reports all 11 feeds dead
 while the server is perfectly healthy, which is exactly what it used to do
 before it honoured the variable.
