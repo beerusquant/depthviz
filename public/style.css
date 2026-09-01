@@ -101,10 +101,14 @@ body {
 #stage { flex: 1 1 auto; position: relative; min-height: 0; }
 #chart { width: 100%; height: 100%; display: block; }
 
+/* A data caveat, not an alarm: the old amber box read as a warning and sat on
+   top of the chart. Same text, muted, one line, clipped — it explains the book
+   rather than interrupting it. */
 .note {
-  position: absolute; left: 92px; bottom: 46px; max-width: 52ch;
-  color: #ffb020; background: rgba(255,176,32,.08);
-  border: 1px solid rgba(255,176,32,.3); border-radius: 4px; padding: 5px 8px; font-size: 10px;
+  position: absolute; left: 92px; right: 24px; bottom: 22px;
+  color: var(--dim); font-size: 10px; line-height: 1.35;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  pointer-events: none; opacity: .72;
 }
 .hidden { display: none; }
 

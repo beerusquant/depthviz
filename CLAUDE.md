@@ -54,6 +54,22 @@ leur ratio attendu est 1 (aucun contrat). Bitunix reste la seule venue sans juge
 - **On compare sur la bande que les deux sources atteignent.** Nous facturer la
   profondeur que ccxt n'a jamais récupérée transforme notre avantage en faux bug.
 
+## 3 bis. Un carnet assemblé se prouve couche par couche
+
+Hyperliquid est le seul carnet **assemblé** et non lu : aucun endpoint du venue ne
+révélera qu'il est faux. La première couture n'utilisait que `{}`, `{3}`, `{2}` et
+**jetait tout bucket grossier ne dépassant pas la couche fine d'une largeur entière**.
+Résultat mesuré : à ±0,13 % du mid sur BTC, le graphe montrait **0,152 de la
+profondeur réelle**. Un trou, pas un arrondi.
+
+- **Chaque couche est une mesure complète jusqu'à son propre bord** : on réconcilie
+  sur la **quantité cumulée**, jamais en coupant sur des frontières de prix. Le
+  premier bucket grossier qui dépasse le bord fin vaut `cumul_grossier − cumul_fin`.
+- **On compare sur la grille de prix de la couche jugée**, pas sur un ±x % arbitraire :
+  couper à ±10 % pénalisait la couture pour avoir mieux résolu la bande — mon premier
+  critère a crié au loup (1.0492) alors que le code était exact.
+- `npm run verify:hyperliquid` et `tools/test-stitch.mjs` gardent les deux propriétés.
+
 ## 4. Ne pas croire un outil sur parole
 
 `smoke-feeds.mjs` a annoncé **les 11 feeds morts** en prod alors que le service était

@@ -24,49 +24,95 @@ const spotCtx = ttlCache(async () => {
 
 /**
  * Hyperliquid returns exactly 20 aggregated levels per side, whatever you ask
- * for; `nSigFigs` only chooses how coarse each level is, and therefore how far
- * the 20 of them reach. One subscription can be either precise or wide, never
- * both — so we run three in parallel and stitch them:
+ * for; `nSigFigs` and `mantissa` only choose how coarse each level is, and
+ * therefore how far the 20 of them reach. One subscription can be precise or
+ * wide, never both — so several run in parallel and are stitched.
  *
- *   null -> finest ticks, ~±0.03% on BTC   (owns mid / spread / near book)
- *   3    -> ~±2.5%                         (fills the mid range)
- *   2    -> ~±25%                          (fills the tail)
+ * Measured bucket width / reach on BTC (2026-09-01):
  *
- * A coarse bucket is only accepted once it clears the next-finer layer's
- * outermost level by a full bucket width, so nothing is ever counted twice.
- * The cost is a one-bucket seam between layers.
+ *   {}                        0.0013%   ±0.025%   <- owns mid / spread
+ *   { nSigFigs:5, mantissa:2} 0.0026%   ±0.050%
+ *   { nSigFigs:5, mantissa:5} 0.0064%   ±0.125%
+ *   { nSigFigs:4 }            0.0128%   ±0.249%
+ *   { nSigFigs:3 }            0.1278%   ±2.492%
+ *   { nSigFigs:2 }            1.2739%   ±24.84%
+ *
+ * The first version of this ran only {}, 3 and 2, which jumped straight from
+ * 0.0013% buckets to 0.128% ones: everything between ±0.025% and ±2.5% was
+ * drawn as a five-step staircase. The four intermediate layers are what the
+ * venue was already willing to serve.
+ *
+ * Cheap coins collapse the ladder — on PUMP the top four layers are byte
+ * identical because the price carries too few significant digits. Nothing is
+ * lost when that happens: identical layers simply add no levels.
  */
-const LAYERS = [null, 3, 2];
+export const LAYERS = [
+  {},
+  { nSigFigs: 5, mantissa: 2 },
+  { nSigFigs: 5, mantissa: 5 },
+  { nSigFigs: 4 },
+  { nSigFigs: 3 },
+  { nSigFigs: 2 },
+];
 
-function stitch(sides, isBid) {
-  // sides: fine -> coarse, each [[price, size], ...] already sorted outward
+/**
+ * Stitch layers fine -> coarse without a seam and without double counting.
+ *
+ * Every layer is complete from the top of book out to its own edge, so the two
+ * are reconciled on CUMULATIVE quantity rather than on price boundaries: the
+ * first coarse bucket reaching past the fine edge contributes
+ * `cumulative_coarse - cumulative_fine`, i.e. exactly the part of that bucket
+ * the finer layer could not see. Buckets fully inside the fine region add
+ * nothing, buckets fully outside are taken as they are.
+ *
+ * This is what removes the one-bucket hole the old rule left at every seam: it
+ * dropped any coarse bucket that straddled the edge, and the depth inside it
+ * with it. Cumulative depth at any price is now preserved exactly, which is the
+ * only property the chart actually reads.
+ *
+ * A negative residual means the two subscriptions were sampled a moment apart
+ * and the coarse one is now smaller; it is clamped to zero rather than allowed
+ * to subtract depth that exists.
+ */
+export function stitch(sides, isBid) {
   const out = [];
-  let edge = null;
+  let edge = null;      // outermost price accepted so far
+  let cumFine = 0;      // cumulative quantity already accounted for
   for (const rows of sides) {
     if (!rows?.length) continue;
     if (edge === null) {
-      out.push(...rows);
-      edge = rows[rows.length - 1][0];
+      for (const [p, q] of rows) { out.push([p, q]); cumFine += q; }
+      edge = out[out.length - 1][0];
       continue;
     }
-    const step = rows.length > 1 ? Math.abs(rows[0][0] - rows[1][0]) : 0;
+    const beyond = (p) => (isBid ? p < edge : p > edge);
+    let cum = 0;          // cumulative of THIS layer, from the top of book
+    let bridged = false;
     for (const [p, q] of rows) {
-      if (isBid ? p <= edge - step : p >= edge + step) out.push([p, q]);
+      cum += q;
+      if (!beyond(p)) continue;               // still inside the finer layer
+      if (!bridged) {
+        bridged = true;
+        const residual = cum - cumFine;       // what this bucket adds past the edge
+        if (residual > 0) { out.push([p, residual]); cumFine += residual; }
+        continue;
+      }
+      out.push([p, q]);
+      cumFine += q;
     }
-    edge = out[out.length - 1][0];
+    if (out.length) edge = out[out.length - 1][0];
   }
   return out;
 }
+
+const NOTE = 'Assembled from six parallel l2Book feeds (Hyperliquid serves 20 aggregated levels per subscription), reconciled on cumulative quantity — depth is exact at every price, resolution coarsens with distance from mid.';
 
 export default {
   id: 'hyperliquid',
   name: 'Hyperliquid',
   markets: ['spot', 'perp'],
   transport: { spot: 'ws', perp: 'ws' },
-  notes: {
-    spot: 'Hyperliquid serves 20 aggregated levels per subscription; the book here is stitched from three parallel l2Book feeds (finest + ~±2.5% + ~±25%), so mid and spread come from the finest ticks at every range. Expect a one-bucket gap where two layers meet.',
-    perp: 'Hyperliquid serves 20 aggregated levels per subscription; the book here is stitched from three parallel l2Book feeds (finest + ~±2.5% + ~±25%), so mid and spread come from the finest ticks at every range. Expect a one-bucket gap where two layers meet.',
-  },
+  notes: { spot: NOTE, perp: NOTE },
 
   async listSymbols(market) {
     if (market === 'perp') {
@@ -103,8 +149,11 @@ export default {
       emit({ bids, asks, ts: Math.max(...snaps.filter(Boolean).map((x) => x.ts)), source: 'ws' });
     };
 
-    const conns = LAYERS.map((nSigFigs, i) => reconnectingWs(WS, {
-      onOpen: (send) => send({ method: 'subscribe', subscription: { type: 'l2Book', coin: s, nSigFigs } }),
+    // One socket per layer: the l2Book payload carries only `coin`, `time` and
+    // `levels` — it does not echo nSigFigs — so several layers multiplexed on
+    // one connection could not be told apart.
+    const conns = LAYERS.map((sub, i) => reconnectingWs(WS, {
+      onOpen: (send) => send({ method: 'subscribe', subscription: { type: 'l2Book', coin: s, ...sub } }),
       onMessage: (raw) => {
         const msg = JSON.parse(raw.toString());
         if (msg.channel === 'error') { status('error', `Hyperliquid: ${msg.data}`); return; }

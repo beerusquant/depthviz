@@ -51,7 +51,7 @@ after something here went wrong, with the measurement that caused it.
 | Binance | 1 358 | 569 | **WS** diff depth @100ms + REST snapshot | 5 000 / 1 300 lv, **±10%** | canonical U/u (spot) and `pu` (futures) resync algorithm |
 | MEXC | 1 982 | 1 129 | **WS** protobuf (spot) + **WS** JSON (perp), REST snapshot | 2 000 / 1 500 lv, ±5% / ±3% | contract sizes converted via `contractSize`; 8s poll watchdog behind both |
 | Bitunix | 844 | 735 | REST poll 1s (spot) / **WS** `depth_books` (perp) | 50 lv ±0.05% / 16 000 lv **±12%** | spot book is capped by the exchange, see tradeoffs |
-| Hyperliquid | 326 | 177 | **WS** `l2Book` ×3 stitched | ~55 lv, **±11%** | three parallel `nSigFigs` layers, see tradeoffs |
+| Hyperliquid | 326 | 177 | **WS** `l2Book` ×6 stitched | ~88 lv, **±11%** | six parallel `nSigFigs`/`mantissa` layers reconciled on cumulative quantity, see tradeoffs |
 | Coinbase | 521 | — | **WS** `level2_batch` (snapshot + updates) | ~22 000 lv, whole book | spot only; the PERP option greys it out |
 | Aster | — | 553 | **WS** diff depth @100ms + REST snapshot | 1 000 lv snapshot ±2.7%, grows with uptime (±5.9% after 9 s) | perp DEX; Binance-futures API dialect, so it runs the shared `diff-book.js` engine |
 | Lighter | — | 214 | **WS** whole-book snapshot + nonce-chained diffs | ~2 900 lv, past ±50% (clipped to ±12%) | perp DEX; markets addressed by numeric `market_id`, resolved from the symbol |
@@ -271,6 +271,7 @@ venue, where one exists (tradeoff 8). The UI needs no changes.
 node tools/smoke-feeds.mjs         # subscribes to all 13 exchange/market combos, prints live mids and depth
 node tools/smoke-ui.mjs            # drives the real page in Chrome: every venue, search, range, copy, PNG
 node tools/verify-conversions.mjs  # re-runs the unit-conversion cross-checks above against live data
+npm run verify:hyperliquid         # the only assembled book: every stitched layer vs its own measurement
 npm test                           # BookSide.applySnapshot resync semantics, no network
 npm run crosscheck                 # tools/crosscheck-ccxt.mjs: ccxt as an independent second opinion (server must be up)
 npm run crosscheck -- mexc --repeat 20   # sample one venue repeatedly and report the ratio distribution
@@ -284,6 +285,49 @@ point them at it: `DEPTHVIZ_URL=ws://127.0.0.1:8888/ws node tools/smoke-feeds.mj
 this wrong is not subtle in its consequences — it reports every feed dead
 while the server is perfectly healthy, which is exactly what it used to do
 before it honoured the variable.
+
+### The Hyperliquid stitch, and the depth it used to eat
+
+Hyperliquid is the only book here that is *assembled* rather than read, so it is
+the only one that can be wrong in a way no venue endpoint would reveal. It was.
+
+The venue serves exactly 20 aggregated levels per subscription; `nSigFigs` and
+`mantissa` choose the bucket width, and therefore how far those 20 reach.
+Measured on BTC: `{}` 0.0013% buckets to ±0.025%, `{nSigFigs:5,mantissa:2}`
+0.0026% to ±0.05%, `{5, mantissa:5}` 0.0064% to ±0.125%, `{4}` 0.0128% to
+±0.25%, `{3}` 0.128% to ±2.5%, `{2}` 1.27% to ±25%. The first implementation
+subscribed to only `{}`, `{3}` and `{2}` — a jump straight from 0.0013% buckets
+to 0.128% ones — and stitched them by **discarding any coarse bucket that did
+not clear the finer layer's edge by a full bucket width**, throwing away the
+depth inside it.
+
+Both halves of that were costly, and `npm run verify:hyperliquid` quantifies it
+by comparing the stitched book against each layer's own cumulative quantity,
+taken on that layer's own price grid:
+
+| cumulative quantity out to | before | after |
+|---|---|---|
+| BTC, `{5,m:2}` edge (±0.05%) | **0.429** | 1.0000 |
+| BTC, `{5,m:5}` edge (±0.13%) | **0.152** | 1.0000 |
+| BTC, `{4}` edge (±0.25%) | **0.313** | 1.0000 |
+| BTC, `{3}` edge (±2.44%) | 0.917 | 1.0000 |
+| BTC, `{2}` edge (±24.7%) | 0.881 | 1.0000 |
+
+Near mid the chart was showing **15% of the real depth** — not a rounding
+artefact, a hole. Two changes fix it. The ladder gains the four intermediate
+layers the venue was already willing to serve (55 → 88 levels/side on BTC, and
+the widest hole inside ±0.5% falls from 0.24% to 0.13%). And the layers are now
+reconciled on **cumulative quantity** instead of cut at price boundaries: each
+layer is complete from the top of book out to its own edge, so the first coarse
+bucket reaching past the finer edge contributes `cumulative_coarse −
+cumulative_fine`, exactly the part the finer layer could not see. All 20 layer
+reconciliations across BTC, ETH, PUMP and HYPE now land at 1.0000.
+
+When the two subscriptions disagree because they were sampled a moment apart,
+the residual goes negative; it is clamped to zero, so a skew costs one stale
+seam bucket for one tick rather than inventing depth. `node tools/test-stitch.mjs`
+(in `npm test`, no network) pins that, the cumulative identity, and the cheap-coin
+case where every layer returns the same book.
 
 Lighter's resync path is the one branch live traffic will not exercise on
 demand, so it was forced: a scratch copy of the adapter corrupted its expected
