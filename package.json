@@ -6,7 +6,10 @@
   "description": "Multi-exchange cumulative order book depth visualizer",
   "scripts": {
     "start": "node server/index.js",
-    "dev": "node --watch server/index.js"
+    "dev": "node --watch server/index.js",
+    "crosscheck": "node tools/crosscheck-ccxt.mjs",
+    "test": "node tools/test-book.mjs",
+    "verify:bitunix": "node tools/verify-bitunix.mjs"
   },
   "dependencies": {
     "express": "^4.19.2",
@@ -16,6 +19,7 @@
     "node": ">=20"
   },
   "devDependencies": {
+    "ccxt": "^4.5.76",
     "playwright": "^1.62.1"
   }
 }

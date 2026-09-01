@@ -1,5 +1,7 @@
 import { fetchJson, ttlCache, reconnectingWs, BookSide } from '../util.js';
 
+const TAIL_MAX_GAP_MS = 30_000;   // longer outage => distrust the deep tail
+
 const CFG = {
   spot: {
     rest: 'https://api.binance.com',
@@ -60,15 +62,24 @@ export default {
     let buffer = [];
     let syncing = false;
     let closed = false;
+    let lastGoodAt = 0;        // last diff successfully applied
+    let tailSince = 0;         // when the deep tail last started from nothing
 
     const applyEvt = (e) => {
-      for (const r of e.b || []) bids.set(r[0], r[1]);
-      for (const r of e.a || []) asks.set(r[0], r[1]);
+      const now = Date.now();
+      for (const r of e.b || []) bids.set(r[0], r[1], now);
+      for (const r of e.a || []) asks.set(r[0], r[1], now);
       lastUpdateId = e.u;
+      lastGoodAt = now;
     };
 
-    const publish = (ts) =>
-      emit({ bids: bids.toArray(), asks: asks.toArray(), ts, source: 'ws' });
+    const publish = (ts) => emit({
+      bids: bids.toArray(), asks: asks.toArray(), ts, source: 'ws',
+      // The book reaches far past the 5000-level snapshot only because diffs
+      // for every price level are applied on top of it, so depth outside the
+      // snapshot's span is a lower bound that grows with uptime.
+      accum: { since: tailSince },
+    });
 
     // Fetch a REST snapshot, then replay buffered diffs on top of it.
     const resync = async () => {
@@ -78,9 +89,14 @@ export default {
       try {
         const snap = await fetchJson(c.rest + c.depth(s));
         if (closed) return;
-        bids.clear(); asks.clear();
-        for (const r of snap.bids) bids.set(r[0], r[1]);
-        for (const r of snap.asks) asks.set(r[0], r[1]);
+        // Keep the accumulated deep tail across a resync, but only if the gap
+        // was short: over TAIL_MAX_GAP_MS, levels out there may have been
+        // cancelled unseen and would show as phantom depth.
+        const keepTail = lastGoodAt > 0 && Date.now() - lastGoodAt < TAIL_MAX_GAP_MS;
+        const kept = bids.applySnapshot(snap.bids, { keepTail })
+                   + asks.applySnapshot(snap.asks, { keepTail });
+        if (!keepTail || !tailSince) tailSince = Date.now();
+        if (keepTail && kept === 0) tailSince = Date.now();
         const uid = snap.lastUpdateId;
         // Drop stale events, then validate the first one bridges the snapshot.
         const pending = buffer.filter((e) => e.u > uid);

@@ -59,9 +59,19 @@ function renderNote() {
   if (state.exchange === 'bitunix' && state.market === 'spot' && state.range > 0.5) {
     bits.push(`±${state.range}% is far beyond what Bitunix spot publishes — read the depth numbers as "everything the exchange will show", not as depth to ±${state.range}%`);
   }
+  // Venues maintained by snapshot + diff only reach past the snapshot's own
+  // span by accumulating updates, so their far depth is a lower bound that
+  // grows with uptime rather than a settled figure. Say so while it is young.
+  const acc = state.book?.accum;
+  if (acc?.since && state.range > 0.6) {
+    const secs = Math.max(0, Math.round((Date.now() - acc.since) / 1000));
+    if (secs < 180) {
+      bits.push(`depth beyond ±0.6% is still converging — built from ${secs < 60 ? `${secs}s` : `${Math.floor(secs / 60)}m${secs % 60}s`} of updates, so it can only grow`);
+    }
+  }
   const m = state.metrics;
   if (m && (m.shortBid || m.shortAsk)) {
-    bits.push(`book stops before ±${state.range}% on the ${m.shortBid && m.shortAsk ? 'both sides' : m.shortBid ? 'bid side' : 'ask side'} — the curve ends where the exchange's data ends`);
+    bits.push(`book stops before ±${state.range}% on ${m.shortBid && m.shortAsk ? 'both sides' : m.shortBid ? 'the bid side' : 'the ask side'} — the curve ends where the exchange's data ends`);
   }
   const el = $('note');
   el.textContent = bits.join(' · ');
@@ -100,7 +110,7 @@ function connect() {
     if (m.op === 'status') setStatus(m.state, m.detail);
     else if (m.op === 'book') {
       if (m.exchange !== state.exchange || m.market !== state.market || m.symbol !== state.symbol) return;
-      state.book = { bids: m.bids, asks: m.asks, ts: m.ts, source: m.source, levels: m.levels };
+      state.book = { bids: m.bids, asks: m.asks, ts: m.ts, source: m.source, levels: m.levels, accum: m.accum };
       state.vol24h = m.vol24h;
       if (state.status !== 'live') setStatus('live');
       invalidate();

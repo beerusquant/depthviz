@@ -16,11 +16,18 @@ npm start          # http://localhost:8787
   (snapshot + diff replay). That has to live server-side anyway, so the backend
   also acts as a fan-out hub: N browsers watching the same symbol share one
   upstream connection.
-- **No ccxt.** It supports five of the six, but the native endpoints win on the
-  thing that actually matters for this chart — depth. Binance native gives 5000
-  levels vs ccxt's default 100; Coinbase's `level=2` book is ~22 000 levels;
-  Bitunix futures returns >15 000. Bitunix is not in ccxt at all. Adding a
-  unified-symbol translation layer to get *less* depth was not worth it.
+- **ccxt is the judge, not the source.** It was measured rather than assumed,
+  and the measurement cuts both ways. Against it as a *source*: it caps at each
+  venue's shallow public endpoint (Hyperliquid 20 levels against the stitch's
+  ~56), it does not carry Bitunix at all, and — the disqualifying one —
+  `fetchOrderBook` returns OKX and MEXC contract-denominated sizes **raw**. It
+  exposes `market.contractSize` but never applies it, so reading the book
+  straight from ccxt is a silent 100x error on `BTC-USDT-SWAP` and ~780x on the
+  inverse `BTC-USD-SWAP`. For it: it is a second, independently maintained
+  implementation, which is exactly what a hand-decoded protobuf and hand-rolled
+  contract maths need pointed at them. So it is a devDependency and
+  `npm run crosscheck` makes it disagree with us on demand.
+
 - **Frontend: vanilla ES modules + Canvas 2D, no charting library.** The chart is
   a bespoke composite — two mirrored stepped cumulative curves with area fill, a
   binned raw-level histogram underneath on the same axis, three dashed reference
@@ -32,7 +39,7 @@ npm start          # http://localhost:8787
 
 | Exchange | Spot | Perp | Transport | Levels seen on BTC | Notes |
 |---|---|---|---|---|---|
-| OKX | 1 385 | 458 | **WS** `books` (incremental, seq-checked) | 400/400 | SWAP sizes are contracts; linear → `ctVal*ctMult`, inverse → `ctVal*ctMult/price` |
+| OKX | 1 385 | 458 | **WS** `books` (incremental, seq-checked) + REST `books-full` tail @1s | 5 000/5 000 | SWAP sizes are contracts; linear → `ctVal*ctMult`, inverse → `ctVal*ctMult/price` |
 | Binance | 1 358 | 568 | **WS** diff depth @100ms + REST snapshot | 5 000 / 1 000 | canonical U/u (spot) and `pu` (futures) resync algorithm |
 | MEXC | 1 974 | 1 120 | **WS** protobuf (spot) + **WS** JSON (perp), REST snapshot | 2 000 / 1 500 | contract sizes converted via `contractSize`; 8s poll watchdog behind both |
 | Bitunix | 844 | 732 | REST poll 1s (spot) / **WS** `depth_books` (perp) | 50 / 15 600 | spot book is capped by the exchange, see tradeoffs |
@@ -88,15 +95,59 @@ count is shown next to the search box.
    a watchdog**: if the websocket produces no book for 8 seconds, REST polling
    starts automatically and stops again the moment the socket recovers — and the
    panel says `poll` while that is happening.
-4. **Books are trimmed server-side** to ±12% of mid and 2 500 levels per side
-   before being sent, then throttled to 5 updates/s. Coinbase's raw 22 000-level
-   book is ~1 MB of JSON per tick otherwise. All metrics inside ±10% are
-   unaffected.
+4. **Books are reduced server-side without losing reach.** Coinbase's raw
+   22 000-level book is ~1 MB of JSON per tick, so the payload has to be cut —
+   but the obvious cut is wrong. Keeping the *2 500 levels nearest to mid*
+   shipped only +-0.62% of a Binance spot book that actually reached +-11%,
+   hiding **64% of the depth inside +-10%** (Coinbase 38%, Bitunix perp 19%).
+   Now levels within +-0.6% of mid go out verbatim and everything beyond is
+   merged into 5 bps geometric buckets emitted as `[vwapPrice, summedQty]`.
+   That form preserves cumulative notional, cumulative base quantity and VWAP
+   *exactly*, since `vwapPrice * summedQty === sum(price * qty)` by
+   construction. The result reaches the full +-12% clip on **fewer** levels than
+   the old truncating rule shipped (~650/side on Coinbase vs 2 500).
+
+   The reach itself is accumulated, not fetched. Binance's and MEXC's snapshots
+   are capped (5 000 levels, ~+-1.1% on BTC) but their diff streams carry every
+   price level, so a maintained book grows past the snapshot to +-10% and
+   beyond. Clearing the book on each resync threw that away — one sequence gap
+   dropped the chart back to the snapshot's span and it re-grew silently over
+   minutes. `BookSide.applySnapshot` now replaces only the snapshot's own price
+   span and keeps the tail beyond it. Because a level cancelled during the
+   outage would linger as phantom depth, a kept level must have been seen
+   within 5 minutes, and the whole tail is dropped when the gap itself exceeded
+   30 s. `node tools/test-book.mjs` covers those branches without a network.
 5. **Depth panels are honest about truncation.** When an exchange's book stops
    before the selected range (Binance spot's 5 000 levels only span ~±0.6% on
    BTC), the curve ends where the data ends and a note says so, instead of
    flat-lining to the edge and implying depth that is not there.
-6. **`±2%`/`±5%` depths are fixed thresholds**, independent of the range
+6. **OKX needs two transports to reach past +-0.3%.** The `books` websocket
+   channel is capped at 400 levels — ~+-0.28% of mid on BTC. REST
+   `books-full` returns 5 000 (~+-1.3%) but is not streamed, and the deeper
+   tick-by-tick channels (`books-l2-tbt`) require a VIP4+ authenticated
+   connection. `books-full` as a websocket channel does not exist — OKX
+   rejects the subscription outright. So the socket stays authoritative for
+   everything inside its own 400-level span, where price moves matter, and a
+   1 s `books-full` poll supplies only the tail beyond that span; no level is
+   served by both. BTC-USDT spot went from +-0.28% / $10.3M to +-1.31% /
+   $19.5M of depth inside +-10%. On BTC that 5 000-level ceiling is still the
+   end of the road, and the truncation note says so.
+
+7. **Accumulated depth is a lower bound, and the panel says so.** Levels that
+   sat outside the snapshot before we connected and were never touched by a
+   diff are invisible to us forever, so far depth on Binance and MEXC only ever
+   grows with uptime. It is never overstated, but it was presented as settled.
+   Those adapters now report when their tail last restarted, and the panel says
+   *depth beyond ±0.6% is still converging* for the first three minutes.
+
+8. **OKX's two transports check each other for free.** The socket's 400 levels
+   and the 1 s `books-full` poll overlap completely, and nothing compared them.
+   Cumulative size over that overlap is now measured on every poll — the kind
+   of drift a sequence counter cannot catch. Three consecutive readings past
+   15% force a resubscribe. Measured live: **0.00-0.18%**, i.e. the incremental
+   book and the venue's own full book agree.
+
+9. **`±2%`/`±5%` depths are fixed thresholds**, independent of the range
    selector; `Bid Depth`/`Ask Depth` are the cumulative notional inside the
    *selected* range. They coincide when the book does not reach the threshold.
 
@@ -158,7 +209,39 @@ asks ascending. The UI needs no changes.
 node tools/smoke-feeds.mjs         # subscribes to all 11 exchange/market combos, prints live mids and depth
 node tools/smoke-ui.mjs            # drives the real page in Chrome: every venue, search, range, copy, PNG
 node tools/verify-conversions.mjs  # re-runs the unit-conversion cross-checks above against live data
+npm test                           # BookSide.applySnapshot resync semantics, no network
+npm run crosscheck                 # ccxt as an independent second opinion on the live book (server must be up)
+npm run crosscheck -- mexc --repeat 20   # sample one venue repeatedly and report the ratio distribution
+npm run verify:bitunix             # the venue ccxt cannot judge, checked against itself and its peers
 ```
 
 `smoke-ui.mjs` needs Chrome (`npm i -D playwright`, then it launches the
 installed `chrome` channel) and writes screenshots to `tools/out/`.
+
+`crosscheck` samples our live websocket book and a ccxt REST snapshot of the
+same instrument moments apart, then compares cumulative base quantity over the
+band **both** books actually reach — charging us for depth ccxt never fetched
+would make the deeper feed look like a bug. Contract-denominated venues are
+expected to differ by exactly the contract multiplier (`ctVal`, or `ctVal/price`
+when inverse); anything else is the error. It takes the median of 3 samples by
+default, because one sample is not a verdict. Last full run: **all 9 judged
+instruments agree**, ratios 0.98–1.04. Bitunix is absent from ccxt, so it has no
+judge and is reported as *not judged* — a skip is never counted as a pass.
+`verify-bitunix.mjs` substitutes three checks that share no arithmetic with the
+code they test: the 24 h spot volume recomputed from 15-minute candles instead
+of hourly ones (**ratio 1.0011**, so the candle-summing that replaces the
+non-existent spot ticker is sound), the futures websocket book against the
+venue's own REST snapshot (**mid identical, size ratio 0.991**), and the spot
+mid against the median of three other venues (**-0.019%**). None of them is a
+second implementation, so they bound the error rather than confirm the data.
+
+A single sample of a thin book can land 2x off simply because the book moved
+between the two reads, so one ratio proves little. `--repeat N` holds one socket
+open, samples repeatedly, and takes the verdict on the **median**. MEXC spot —
+the hand-decoded protobuf feed, and so the integration most likely to be wrong —
+was the loosest single reading at 1.15. Two independent runs of n = 20 both put
+its **median at exactly 1.000** (p05 0.47, p95 1.67): the spread is the book
+moving, not our sizes. MEXC perp lands at median 1.000 with p05 0.99 / p95 1.08,
+as a dense book should. Hyperliquid is judged on the ~±0.025% its 20 aggregated
+levels span, the narrowest band here and so the noisiest: median **1.003** at
+n = 20, p05 0.70 / p95 1.30.

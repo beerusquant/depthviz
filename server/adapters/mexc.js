@@ -1,5 +1,7 @@
 import { fetchJson, ttlCache, poller, reconnectingWs, BookSide, pbFields, watchdogFallback } from '../util.js';
 
+const TAIL_MAX_GAP_MS = 30_000;   // longer outage => distrust the deep tail
+
 const SPOT = 'https://api.mexc.com';
 const FUT = 'https://contract.mexc.com';
 const SPOT_WS = 'wss://wbs-api.mexc.com/ws';
@@ -61,12 +63,18 @@ function openSpot(s, emit, status) {
   const bids = new BookSide(true);
   const asks = new BookSide(false);
   let version = null, buffer = [], syncing = false, closed = false;
+  let lastGoodAt = 0, tailSince = 0;
 
-  const publish = (ts) => emit({ bids: bids.toArray(), asks: asks.toArray(), ts, source: 'ws' });
+  const publish = (ts, source = 'ws') => emit({
+    bids: bids.toArray(), asks: asks.toArray(), ts, source,
+    accum: { since: tailSince },
+  });
   const applyEvt = (e) => {
-    for (const [p, q] of e.bids) bids.set(p, q);
-    for (const [p, q] of e.asks) asks.set(p, q);
+    const now = Date.now();
+    for (const [p, q] of e.bids) bids.set(p, q, now);
+    for (const [p, q] of e.asks) asks.set(p, q, now);
     version = e.to;
+    lastGoodAt = now;
   };
 
   const resync = async () => {
@@ -76,9 +84,10 @@ function openSpot(s, emit, status) {
     try {
       const snap = await fetchJson(`${SPOT}/api/v3/depth?symbol=${s}&limit=5000`);
       if (closed) return;
-      bids.clear(); asks.clear();
-      for (const r of snap.bids) bids.set(r[0], r[1]);
-      for (const r of snap.asks) asks.set(r[0], r[1]);
+      const keepTail = lastGoodAt > 0 && Date.now() - lastGoodAt < TAIL_MAX_GAP_MS;
+      const kept = bids.applySnapshot(snap.bids, { keepTail })
+                 + asks.applySnapshot(snap.asks, { keepTail });
+      if (!keepTail || !kept || !tailSince) tailSince = Date.now();
       const uid = snap.lastUpdateId;
       const pending = buffer.filter((e) => e.to > uid);
       buffer = [];
@@ -131,12 +140,18 @@ function openPerp(s, cs, emit, status) {
   const bids = new BookSide(true);
   const asks = new BookSide(false);
   let version = null, buffer = [], syncing = false, closed = false;
+  let lastGoodAt = 0, tailSince = 0;
 
-  const publish = (ts) => emit({ bids: bids.toArray(), asks: asks.toArray(), ts, source: 'ws' });
+  const publish = (ts, source = 'ws') => emit({
+    bids: bids.toArray(), asks: asks.toArray(), ts, source,
+    accum: { since: tailSince },
+  });
   const applyEvt = (d) => {
-    for (const r of d.bids || []) bids.set(r[0], +r[1] * cs);
-    for (const r of d.asks || []) asks.set(r[0], +r[1] * cs);
+    const now = Date.now();
+    for (const r of d.bids || []) bids.set(r[0], +r[1] * cs, now);
+    for (const r of d.asks || []) asks.set(r[0], +r[1] * cs, now);
     version = d.end ?? d.version;
+    lastGoodAt = now;
   };
 
   const resync = async () => {
@@ -147,9 +162,10 @@ function openPerp(s, cs, emit, status) {
       const j = await fetchJson(`${FUT}/api/v1/contract/depth/${s}`);
       if (closed) return;
       const d = j.data || {};
-      bids.clear(); asks.clear();
-      for (const r of d.bids || []) bids.set(r[0], +r[1] * cs);
-      for (const r of d.asks || []) asks.set(r[0], +r[1] * cs);
+      const keepTail = lastGoodAt > 0 && Date.now() - lastGoodAt < TAIL_MAX_GAP_MS;
+      const kept = bids.applySnapshot((d.bids || []).map((r) => [+r[0], +r[1] * cs]), { keepTail })
+                 + asks.applySnapshot((d.asks || []).map((r) => [+r[0], +r[1] * cs]), { keepTail });
+      if (!keepTail || !kept || !tailSince) tailSince = Date.now();
       const v = +d.version;
       const pending = buffer.filter((e) => (e.end ?? e.version) > v);
       buffer = [];

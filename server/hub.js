@@ -1,20 +1,45 @@
 import { adapters } from './adapters/index.js';
 
-const MAX_LEVELS = 2500;   // per side, nearest to mid
 const CLIP_PCT = 12;       // never ship levels further than this from mid
+const EXACT_PCT = 0.6;     // levels this close to mid are shipped verbatim
+const EXACT_MAX = 2000;    // hard cap on verbatim levels per side
+const BUCKET_BPS = 5;      // geometric bucket width beyond the exact zone
 const THROTTLE_MS = 200;
 
 const feeds = new Map(); // key -> Feed
 
+// Reduce a side to a bounded number of levels WITHOUT losing reach.
+// Near mid every level is kept as-is; further out, levels are merged into
+// geometric buckets emitted as [vwapPrice, summedQty] — a form that preserves
+// the side's cumulative notional, cumulative base quantity and VWAP exactly,
+// because vwapPrice * summedQty === sum(price * qty) by construction.
+// The old "keep the 2500 nearest levels" rule silently truncated the curve:
+// on Binance spot BTC it shipped +-0.62% of a book that reached +-11%, hiding
+// 64% of the depth inside +-10%.
 function trim(rows, mid) {
-  const lo = mid * (1 - CLIP_PCT / 100);
-  const hi = mid * (1 + CLIP_PCT / 100);
   const out = [];
+  const step = Math.log(1 + BUCKET_BPS / 10_000);
+  let bucket = null;   // current bucket index, null while still verbatim
+  let notional = 0;
+  let qty = 0;
+  const flush = () => {
+    if (qty > 0) out.push([notional / qty, qty]);
+    notional = 0; qty = 0;
+  };
   for (const [p, q] of rows) {
-    if (p < lo || p > hi) break; // sides are sorted outward from mid
-    if (q > 0) out.push([p, q]);
-    if (out.length >= MAX_LEVELS) break;
+    if (!(q > 0)) continue;
+    const d = Math.abs(p - mid) / mid * 100;
+    if (d > CLIP_PCT) break; // sides are sorted outward from mid
+    if (bucket === null && d <= EXACT_PCT && out.length < EXACT_MAX) {
+      out.push([p, q]);
+      continue;
+    }
+    const idx = Math.floor(Math.log1p(d / 100) / step);
+    if (idx !== bucket) { flush(); bucket = idx; }
+    notional += p * q;
+    qty += q;
   }
+  flush();
   return out;
 }
 
@@ -62,7 +87,7 @@ class Feed {
     this.broadcast({ op: 'status', state: next, detail: this.detail });
   }
 
-  onBook({ bids, asks, ts, source }) {
+  onBook({ bids, asks, ts, source, accum, drift }) {
     if (!bids.length || !asks.length) return;
     const mid = (bids[0][0] + asks[0][0]) / 2;
     if (!(mid > 0)) return;
@@ -76,6 +101,8 @@ class Feed {
       ts: ts || Date.now(),
       source,
       levels: [bids.length, asks.length],
+      accum: accum || null,
+      drift: drift ?? null,
     };
     if (this.state !== 'live') { this.state = 'live'; this.broadcast({ op: 'status', state: 'live', detail: '' }); }
     this.schedule();

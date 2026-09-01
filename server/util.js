@@ -144,14 +144,52 @@ export class BookSide {
   constructor(isBid) {
     this.isBid = isBid;
     this.m = new Map();
+    this.seen = new Map();  // price -> ms of the last update that set it
   }
-  clear() { this.m.clear(); }
-  set(price, size) {
+  clear() { this.m.clear(); this.seen.clear(); }
+  set(price, size, now = Date.now()) {
     const p = +price, s = +size;
     if (!isFinite(p)) return;
-    if (!(s > 0)) this.m.delete(p);
-    else this.m.set(p, s);
+    if (!(s > 0)) { this.m.delete(p); this.seen.delete(p); }
+    else { this.m.set(p, s); this.seen.set(p, now); }
   }
+
+  /**
+   * Rebuild from a REST snapshot WITHOUT discarding the deep tail.
+   *
+   * Venues that stream diffs cap their snapshot (Binance spot: 5000 levels,
+   * only ~+-1.1% of mid on BTC) but stream updates for every price level, so a
+   * book maintained over time reaches far past the snapshot — +-10% and beyond.
+   * Clearing the book on every resync threw that away, and a single sequence
+   * gap silently dropped the chart's reach back to the snapshot's span for
+   * minutes while it re-accumulated.
+   *
+   * The snapshot is complete and authoritative *inside its own price span*, so
+   * that range is replaced outright. Levels beyond it are kept — but a level
+   * cancelled while we were disconnected would linger as phantom depth, so a
+   * kept level must also have been seen within `maxAgeMs`. Callers drop the
+   * tail entirely when the gap itself was long (see `keepTail` at each site).
+   *
+   * Returns how many out-of-span levels survived.
+   */
+  applySnapshot(rows, { maxAgeMs = 5 * 60_000, keepTail = true, now = Date.now() } = {}) {
+    if (!rows.length) { this.clear(); return 0; }
+    let edge = +rows[0][0];
+    for (const r of rows) {
+      const p = +r[0];
+      if (this.isBid ? p < edge : p > edge) edge = p;
+    }
+    const inSpan = (p) => (this.isBid ? p >= edge : p <= edge);
+    let kept = 0;
+    for (const p of [...this.m.keys()]) {
+      if (!keepTail || inSpan(p) || now - (this.seen.get(p) ?? 0) > maxAgeMs) {
+        this.m.delete(p); this.seen.delete(p);
+      } else kept++;
+    }
+    for (const r of rows) this.set(r[0], r[1], now);
+    return kept;
+  }
+
   /** Sorted [[price,size]...] — bids descending, asks ascending. */
   toArray() {
     const out = [...this.m.entries()];
