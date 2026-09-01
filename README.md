@@ -6,8 +6,13 @@ the raw book levels underneath and a full metrics panel.
 
 ```bash
 npm install
-npm start          # http://localhost:8787
+npm start          # http://127.0.0.1:8787
 ```
+
+It binds loopback only. There is no authentication, and every viewer makes the
+host open upstream connections to six exchanges from *its* IP — on a box that
+also runs trading bots, that is someone else's rate-limit budget. Exposing it is
+therefore deliberate: `HOST=0.0.0.0 PORT=8888 npm start`.
 
 ## Stack, and why
 
