@@ -1,6 +1,6 @@
 # depthviz
 
-Live cumulative order-book depth visualizer across six venues, spot and perp.
+Live cumulative order-book depth visualizer across eight venues, spot and perp.
 Pick a market type, an exchange and a symbol; get a cumulative depth curve with
 the raw book levels underneath and a full metrics panel.
 
@@ -10,7 +10,7 @@ npm start          # http://127.0.0.1:8787
 ```
 
 It binds loopback only. There is no authentication, and every viewer makes the
-host open upstream connections to six exchanges from *its* IP — on a box that
+host open upstream connections to eight exchanges from *its* IP — on a box that
 also runs trading bots, that is someone else's rate-limit budget. Exposing it is
 therefore deliberate: `HOST=0.0.0.0 PORT=8888 npm start`.
 
@@ -20,7 +20,7 @@ after something here went wrong, with the measurement that caused it.
 ## Stack, and why
 
 - **Backend: Node ESM + `ws` + Express, no build step.** Every exchange here
-  refuses browser CORS, and three of the six need stateful book maintenance
+  refuses browser CORS, and five of the eight need stateful book maintenance
   (snapshot + diff replay). That has to live server-side anyway, so the backend
   also acts as a fan-out hub: N browsers watching the same symbol share one
   upstream connection.
@@ -53,6 +53,12 @@ after something here went wrong, with the measurement that caused it.
 | Bitunix | 844 | 735 | REST poll 1s (spot) / **WS** `depth_books` (perp) | 50 lv ±0.05% / 16 000 lv **±12%** | spot book is capped by the exchange, see tradeoffs |
 | Hyperliquid | 326 | 177 | **WS** `l2Book` ×3 stitched | ~55 lv, **±11%** | three parallel `nSigFigs` layers, see tradeoffs |
 | Coinbase | 521 | — | **WS** `level2_batch` (snapshot + updates) | ~22 000 lv, whole book | spot only; the PERP option greys it out |
+| Aster | — | 553 | **WS** diff depth @100ms + REST snapshot | 1 000 lv snapshot ±2.7%, grows with uptime (±5.9% after 9 s) | perp DEX; Binance-futures API dialect, so it runs the shared `diff-book.js` engine |
+| Lighter | — | 214 | **WS** whole-book snapshot + nonce-chained diffs | ~2 900 lv, past ±50% (clipped to ±12%) | perp DEX; markets addressed by numeric `market_id`, resolved from the symbol |
+
+Aster and Lighter are perp DEXs and are exposed as perp only. Aster does list
+spot pairs on a separate `sapi` host; that is a different, much thinner product
+and is not wired up. Lighter publishes no active spot market at all.
 
 Bitunix spot 24h volume is not a ticker read: the venue publishes no spot
 ticker at all (every `/market/ticker*` path 404s), so it is summed from hourly
@@ -189,7 +195,7 @@ is checked against a second, independent source by
   four. `dayNtlVlm` is independently cross-checked against a different endpoint,
   `candleSnapshot` (sum of 24 hourly `volume * close`): ratios 0.972 and 0.983.
 - **Cross-venue sanity at a single instant.** BTC perp cumulative depth within
-  ±0.1% of mid lands at $6–20M per side on all five perp venues. The same OKX
+  ±0.1% of mid lands at $3–20M per side on all seven perp venues. The same OKX
   book without the contract conversion reads $1 334M — a missed conversion is a
   100× error, and it would not hide.
 
@@ -240,8 +246,12 @@ Drop a module in `server/adapters/` exporting
 }
 ```
 
-and register it in `server/adapters/index.js`. `open` may return a promise (OKX
-and MEXC do — they need contract sizes first) and resolves to `{ close() }`. It
+and register it in `server/adapters/index.js`. If the venue speaks the Binance
+snapshot+diff dialect, do not re-implement it: `server/adapters/diff-book.js`
+holds that engine (`style: 'spot'` for `U === lastUpdateId + 1`, `'futures'` for
+`pu === lastUpdateId`) and both Binance and Aster are thin config on top of it.
+`open` may return a promise (OKX, MEXC and Lighter do — they need contract sizes,
+or a `market_id`, first) and resolves to `{ close() }`. It
 pushes
 
 ```js
@@ -258,7 +268,7 @@ venue, where one exists (tradeoff 8). The UI needs no changes.
 ## Smoke tests
 
 ```bash
-node tools/smoke-feeds.mjs         # subscribes to all 11 exchange/market combos, prints live mids and depth
+node tools/smoke-feeds.mjs         # subscribes to all 13 exchange/market combos, prints live mids and depth
 node tools/smoke-ui.mjs            # drives the real page in Chrome: every venue, search, range, copy, PNG
 node tools/verify-conversions.mjs  # re-runs the unit-conversion cross-checks above against live data
 npm test                           # BookSide.applySnapshot resync semantics, no network
@@ -271,9 +281,16 @@ No tool hardcodes a port. The three websocket-backed ones take `DEPTHVIZ_URL`
 (default `ws://127.0.0.1:8787/ws`) and `smoke-ui.mjs` takes `DEPTHVIZ_HTTP`
 (default `http://127.0.0.1:8787`); the deployed service listens on 8888, so
 point them at it: `DEPTHVIZ_URL=ws://127.0.0.1:8888/ws node tools/smoke-feeds.mjs`. Getting
-this wrong is not subtle in its consequences — it reports all 11 feeds dead
+this wrong is not subtle in its consequences — it reports every feed dead
 while the server is perfectly healthy, which is exactly what it used to do
 before it honoured the variable.
+
+Lighter's resync path is the one branch live traffic will not exercise on
+demand, so it was forced: a scratch copy of the adapter corrupted its expected
+nonce after five updates, and the feed detected the gap, unsubscribed,
+resubscribed and came back on a second full snapshot (`snapshots=2 resyncs=1
+books=455` over 25 s). The venue refuses a second `subscribe` on a live channel
+(code 30003 "Already Subscribed"), which is why the channel is dropped first.
 
 `smoke-ui.mjs` needs Chrome: playwright is already a devDependency, and it
 drives the `chrome` channel installed on the machine rather than downloading a
@@ -285,8 +302,10 @@ band **both** books actually reach — charging us for depth ccxt never fetched
 would make the deeper feed look like a bug. Contract-denominated venues are
 expected to differ by exactly the contract multiplier (`ctVal`, or `ctVal/price`
 when inverse); anything else is the error. It takes the median of 3 samples by
-default, because one sample is not a verdict. Last full run: **all 9 judged
-instruments agree**, medians 0.94–1.03. Bitunix is absent from ccxt, so it has no
+default, because one sample is not a verdict. Last full run: **all 11 judged
+instruments agree**, medians 0.94–1.03 — Aster at **1.004** (n=3) and Lighter at
+**1.010** (n=15, judged on the ±0.046% its 100-level ccxt book spans against our
+whole-book stream), both with the mid identical to four decimals. Bitunix is absent from ccxt, so it has no
 judge and is reported as *not judged* — a skip is never counted as a pass.
 `verify-bitunix.mjs` substitutes three checks that share no arithmetic with the
 code they test: the 24 h spot volume recomputed from 15-minute candles instead

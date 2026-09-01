@@ -52,7 +52,7 @@ console.log('  perp menu:', JSON.stringify(menu));
 await p.keyboard.press('Escape'); await p.click('body', { position: { x: 700, y: 400 } });
 console.log('perp default      ', JSON.stringify(await info()));
 
-for (const [name, sym] of [['OKX', 'BTC/USDT'], ['MEXC', 'BTC/USDT'], ['Bitunix', 'BTC/USDT'], ['Hyperliquid', 'BTC/USD']]) {
+for (const [name, sym] of [['OKX', 'BTC/USDT'], ['MEXC', 'BTC/USDT'], ['Bitunix', 'BTC/USDT'], ['Aster', 'BTC/USDT'], ['Lighter', 'BTC/USD'], ['Hyperliquid', 'BTC/USD']]) {
   await pickEx(name);
   console.log(`${name}/perp`.padEnd(18), JSON.stringify(await info()));
 }

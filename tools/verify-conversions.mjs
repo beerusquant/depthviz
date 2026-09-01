@@ -124,5 +124,20 @@ console.log('\n=== D. Cross-venue sanity: BTC perp cumulative USD depth within Â
     const b = d.levels[0].map((l) => [+l.px, +l.sz]), a = d.levels[1].map((l) => [+l.px, +l.sz]);
     const mid = (b[0][0] + a[0][0]) / 2; rows.push(['Hyperliq (base units, no conversion)', mid, ...band(b, a, mid)]);
   }
+  {
+    const d = await get('https://fapi.asterdex.com/fapi/v1/depth?symbol=BTCUSDT&limit=1000');
+    const b = d.bids.map((r) => [+r[0], +r[1]]), a = d.asks.map((r) => [+r[0], +r[1]]);
+    const mid = (b[0][0] + a[0][0]) / 2; rows.push(['Aster    (base units, no conversion)', mid, ...band(b, a, mid)]);
+  }
+  {
+    // Lighter publishes no aggregated REST book â€” this sums the INDIVIDUAL
+    // resting orders, which is a different endpoint and a different shape from
+    // the aggregated websocket levels the adapter consumes. 200 orders/side is
+    // the endpoint's ceiling and reaches ~+-0.15%, so it just covers the band.
+    const d = await get('https://mainnet.zklighter.elliot.ai/api/v1/orderBookOrders?market_id=1&limit=200');
+    const conv = (rows) => rows.map((o) => [+o.price, +o.remaining_base_amount]);
+    const b = conv(d.bids), a = conv(d.asks);
+    const mid = (b[0][0] + a[0][0]) / 2; rows.push(['Lighter  (base units, summed per-order REST)', mid, ...band(b, a, mid)]);
+  }
   for (const [n, mid, bd, ad] of rows) console.log(`  ${n.padEnd(54)} mid=${mid.toFixed(1)}  bid=${usd(bd).padStart(9)}  ask=${usd(ad).padStart(9)}`);
 }

@@ -17,10 +17,14 @@ signale pas.
   (`contractSize`), Hyperliquid spot (contextes keyés par `ctx.coin`, **jamais** par
   index — l'alignement positionnel donne −99,9 % d'erreur). Une conversion oubliée est
   une erreur ×100 invisible : le graphe reste beau, seuls les zéros changent.
+  Aster et Lighter cotent en unités de base (`contractSize` ccxt = 1, `multiplier`
+  = 1,0 sur les 242 marchés Lighter) — vérifié, pas supposé. Lighter s'adresse par
+  `market_id` numérique et non par symbole : la résolution passe par sa propre
+  liste de marchés, jamais par un index.
 - **Jamais de chiffre sans protocole.** Une profondeur s'énonce avec sa venue, sa bande
   (±x %) et l'instant. « $70M de profondeur » ne veut rien dire.
-- **Toute profondeur au-delà de ±0,6 % sur Binance et MEXC est une borne inférieure**,
-  pas un fait. Ces carnets ne dépassent leur snapshot qu'en accumulant des diffs : les
+- **Toute profondeur au-delà de ±0,6 % sur Binance, MEXC et Aster est une borne
+  inférieure**, pas un fait. Ces carnets ne dépassent leur snapshot qu'en accumulant des diffs : les
   niveaux lointains présents avant la connexion et jamais retouchés nous sont invisibles
   à jamais. Le chiffre ne peut que monter. L'UI le dit, le code ne doit pas l'oublier.
 
@@ -34,6 +38,9 @@ supposé.
 Il reste précieux comme **seconde implémentation indépendante** contre laquelle nos
 adapters faits main peuvent avoir tort : `npm run crosscheck`. Sur les venues en
 contrats, le ratio **attendu est le multiplicateur, pas 1**.
+
+ccxt porte `aster` et `lighter` : les deux DEX perp ont donc un juge externe, et
+leur ratio attendu est 1 (aucun contrat). Bitunix reste la seule venue sans juge.
 
 ## 3. Un check qui crie au loup est pire que pas de check
 

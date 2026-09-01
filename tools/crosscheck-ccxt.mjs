@@ -37,6 +37,10 @@ const VENUES = [
   { ours: ['mexc','perp','BTC_USDT'],           ccxt: ['mexc','BTC/USDT:USDT',null],  contracts: true },
   { ours: ['coinbase','spot','BTC-USD'],        ccxt: ['coinbaseexchange','BTC/USD',null] },
   { ours: ['hyperliquid','perp','BTC'],         ccxt: ['hyperliquid','BTC/USDC:USDC',null] },
+  { ours: ['aster','perp','BTCUSDT'],           ccxt: ['aster','BTC/USDT:USDT',1000] },
+  // Lighter's ccxt book is 100 levels (~±0.02% on BTC) against our whole-book
+  // stream, so the overlap band is thin and one read moves a lot: sample more.
+  { ours: ['lighter','perp','BTC'],             ccxt: ['lighter','BTC/USDC:USDC',null], reps: 15 },
   // bitunix: absent from ccxt (103 exchanges, not one of them) — no judge available.
 ];
 

@@ -10,6 +10,7 @@ const combos = [
   ['bitunix','spot','btcusdt'], ['bitunix','perp','BTCUSDT'],
   ['hyperliquid','spot','@107'], ['hyperliquid','perp','BTC'],
   ['coinbase','spot','BTC-USD'],
+  ['aster','perp','BTCUSDT'], ['lighter','perp','BTC'],
 ];
 const fmt=(n)=>n==null?'n/a':'$'+(n/1e6).toFixed(1)+'M';
 const run = ([ex,mk,sym]) => new Promise((res)=>{
