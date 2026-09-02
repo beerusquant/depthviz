@@ -472,6 +472,39 @@ actually has there: catching an order-of-magnitude or systematic error, not a
 precision than the venue offers is how a check starts crying wolf, and a check
 nobody believes catches nothing.
 
+### What an hourly timer taught the checks
+
+Running the suite once an hour turned the checks into their own experiment, and
+the first night's verdict was damning: **5 failures in 26 runs**, none of them
+the data. Two Binance markets reported unjudged after a transient ccxt error;
+`binance/perp` returned 0.895 once at n=3, which a direct comparison against
+Binance's own REST endpoint could not reproduce (1.000 / 1.004 / 0.997 at ±0.05
+/ ±0.1 / ±0.156%, eight samples); Coinbase straddled agreement at n=3;
+Hyperliquid straddled it at n=15 on a ±0.025% band; and one Hyperliquid layer
+reconciliation came back 1.0153 while the other nineteen were exactly 1.0000.
+
+A checker that fails one run in five trains you to ignore it, so each cause was
+answered where it lived, and none of them by relaxing a global threshold:
+
+- **The narrow-band instruments take 15 samples,** not 3. The band is not a
+  choice — it is however far ccxt's book reaches, ±0.16% on Binance perp and
+  ±0.025% on Hyperliquid — and at that width a couple of orders are the whole
+  measurement.
+- **Tolerance is per instrument, derived from its measured noise** (see the MEXC
+  spot note below for what that measurement looks like). This is the honest
+  version of the trade: on those instruments the check can prove there is no
+  order-of-magnitude or systematic error, and cannot prove there is no 10% one.
+  A missed contract multiplier is 100x and still screams.
+- **A failure to measure is retried once** before it counts as unjudged, and the
+  output says `[measured on the retry]` so a venue that needs it every time
+  stays visible.
+- **`verify-hyperliquid` re-reads before it accuses.** Its six layers are fetched
+  together but are not one atomic snapshot, so the book can move between the
+  first response and the last. A stitch bug is wrong on every read; skew is not.
+  A layer is only reported when it fails three independent reads — verified by
+  injecting both a transient fault (recovered on read 2, exit 0) and a permanent
+  one (still off after 3 reads, named, exit 1).
+
 Three samples still could not find MEXC spot's median — it read 0.648 on one
 full run — so that instrument alone takes 15 by default. And when a sample's own
 p05..p95 straddles agreement, the run reports **INCONC** rather than FAIL: it has

@@ -30,7 +30,12 @@ const VENUES = [
   { ours: ['okx','perp','BTC-USDT-SWAP'],       ccxt: ['okx','BTC/USDT:USDT',5000],   contracts: true },
   { ours: ['okx','perp','BTC-USD-SWAP'],        ccxt: ['okx','BTC/USD:BTC',5000],      contracts: true },
   { ours: ['binance','spot','BTCUSDT'],         ccxt: ['binance','BTC/USDT',5000] },
-  { ours: ['binance','perp','BTCUSDT'],         ccxt: ['binanceusdm','BTC/USDT:USDT',1000] },
+  // ccxt's futures book stops at 1000 levels — about ±0.16% on BTC — so that is
+  // the whole band available, and one large level near its edge moves the ratio
+  // 10%. Hourly medians: 0.949, 0.973, 0.987, 0.991, 0.997, and one 0.895 at
+  // n=3 that a direct comparison against Binance's own REST endpoint could not
+  // reproduce (1.000 / 1.004 / 0.997 at ±0.05 / ±0.1 / ±0.156%, eight samples).
+  { ours: ['binance','perp','BTCUSDT'],         ccxt: ['binanceusdm','BTC/USDT:USDT',1000], reps: 15, tol: [0.85, 1.18] },
   // MEXC spot's own liquidity flickers, and no amount of sampling discipline
   // fixes that. Measured on the venue's REST endpoint directly — no ccxt, no
   // depthviz — ten reads 4s apart over ±2%: 177, 132, 115, 43, 221, 164, 140,
@@ -47,12 +52,18 @@ const VENUES = [
   // a check cry wolf, and a check nobody believes catches nothing.
   { ours: ['mexc','spot','BTCUSDT'],            ccxt: ['mexc','BTC/USDT',5000],       reps: 15, tol: [0.5, 2] },
   { ours: ['mexc','perp','BTC_USDT'],           ccxt: ['mexc','BTC/USDT:USDT',null],  contracts: true },
-  { ours: ['coinbase','spot','BTC-USD'],        ccxt: ['coinbaseexchange','BTC/USD',null] },
-  // Judged on the ~±0.025% Hyperliquid's 20 finest levels span — the narrowest
-  // band here. Three samples straddle agreement as a matter of course (p05 0.68
-  // / p95 1.10 on an hourly run), which reads as a failure and is not one, so
-  // this instrument gets a real median like MEXC spot does.
-  { ours: ['hyperliquid','perp','BTC'],         ccxt: ['hyperliquid','BTC/USDC:USDC',null], reps: 15 },
+  // Coinbase serves its whole book, so the band is the full ±0.5% — but three
+  // samples straddled agreement once (median 1.106, p05 0.995), reported
+  // INCONCLUSIVE and exited non-zero. Nothing was wrong; three samples were
+  // simply not a median.
+  { ours: ['coinbase','spot','BTC-USD'],        ccxt: ['coinbaseexchange','BTC/USD',null], reps: 15 },
+  // The narrowest band of all: ccxt sees the same 20 aggregated levels the venue
+  // serves, ~±0.025% of mid, while our stitched book reaches ±11%. Fifteen
+  // samples give a median that still wanders — 1.000, 1.008, 1.005, 0.965,
+  // 0.893, 1.001 across hourly runs — because at that width a couple of orders
+  // are the entire measurement. The tolerance states what the check can prove
+  // here; a missed unit conversion would be 100x and still scream.
+  { ours: ['hyperliquid','perp','BTC'],         ccxt: ['hyperliquid','BTC/USDC:USDC',null], reps: 15, tol: [0.80, 1.25] },
   { ours: ['aster','perp','BTCUSDT'],           ccxt: ['aster','BTC/USDT:USDT',1000] },
   // Lighter's ccxt book is 100 levels (~±0.02% on BTC) against our whole-book
   // stream, so the overlap band is thin and one read moves a lot: sample more.
@@ -137,6 +148,24 @@ const run = (v) => new Promise((res) => {
   });
 });
 
+/**
+ * A venue that could not be reached is reported as "not judged" and exits
+ * non-zero, because an absent measurement is not a passing one. That is right,
+ * but one transient — a rate limit, a dropped connection — should not spend the
+ * whole run's credibility: an hourly run reported two Binance markets unjudged
+ * and nothing was wrong with either. A failure to measure is retried once
+ * before it is believed, and the retry is named in the output so a venue that
+ * needs it every time stays visible.
+ */
+const runWithRetry = async (v) => {
+  const first = await run(v);
+  if (!first.err) return first;
+  await new Promise((r) => setTimeout(r, 5000));
+  const second = await run(v);
+  if (!second.err) return { ...second, retried: true };
+  return { ...second, err: `${second.err} (twice; first: ${first.err})` };
+};
+
 const argv = process.argv.slice(2);
 // A single sample is not a verdict: on a thin book, or where the overlap band
 // is only the ~0.02% Hyperliquid's 20 levels span, one read can be 1.7x off
@@ -151,7 +180,7 @@ console.log(`ccxt cross-check — band ±${BAND}% of mid, our live ws vs a ccxt 
 let bad = 0, ok = 0, skipped = 0, inconclusive = 0;
 for (const v of list) {
   const tag = `${v.ours[0]}/${v.ours[1]} ${v.ours[2]}`.padEnd(29);
-  const r = await run(v);
+  const r = await runWithRetry(v);
   if (r.err) { skipped++; console.log(`${tag} SKIP  ${r.err}`); continue; }
   const midOff = (r.m1 / r.m2 - 1) * 100;
   // For contract-denominated books the CORRECT qty ratio is the contract
@@ -174,7 +203,8 @@ for (const v of list) {
   const straddles = r.n > 1 && r.lo / expect <= 1 && r.hi / expect >= 1;
   const verdict = okMid && okQty ? 'OK  ' : straddles ? 'INCONC' : 'FAIL';
   if (verdict === 'OK  ') ok++; else if (verdict === 'FAIL') bad++; else inconclusive++;
-  const note = r.contracts ? `  [ccxt ships raw contracts; contractSize=${r.size}${r.inverse ? ' USD, inverse' : ''}]` : '';
+  const note = (r.contracts ? `  [ccxt ships raw contracts; contractSize=${r.size}${r.inverse ? ' USD, inverse' : ''}]` : '')
+    + (r.retried ? '  [measured on the retry]' : '');
   const dist = r.n > 1
     ? ` | n=${r.n} median ${(r.med / expect).toFixed(3)} p05 ${(r.lo / expect).toFixed(3)} p95 ${(r.hi / expect).toFixed(3)}`
     : '';

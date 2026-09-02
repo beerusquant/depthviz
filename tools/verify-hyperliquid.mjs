@@ -64,21 +64,37 @@ const worstGap = (rows, mid, pct) => {
 
 let fails = 0, checks = 0;
 const coins = process.argv.slice(2).length ? process.argv.slice(2) : ['BTC', 'ETH', 'PUMP', 'HYPE'];
-console.log('Hyperliquid stitch — cumulative quantity vs each layer\'s own measurement\n');
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+const ATTEMPTS = 3;
 
-for (const coin of coins) {
+/**
+ * One measurement of a coin: fetch every layer, stitch, and reconcile.
+ *
+ * The six layers are fetched together but they are not one atomic snapshot, so
+ * the book can move between the first response and the last. That shows up as a
+ * reconciliation off by a percent or so — seen once on the hourly timer, BTC at
+ * the {5,m:5} edge, 1.0153, with the other nineteen exactly 1.0000.
+ *
+ * A stitch bug is deterministic: it is wrong on every read, of every coin. Skew
+ * is not. So a coin that fails is measured again, and only a layer that fails
+ * every attempt is reported — which is the difference between a check that
+ * finds bugs and a check that reports the weather.
+ */
+async function measure(coin) {
   const [now, old] = await Promise.all([fetchLayers(coin, LAYERS), fetchLayers(coin, OLD)]);
-  if (!now[0]) { console.log(`${coin}: no book`); fails++; continue; }
+  if (!now[0]) return { lines: [`${coin}: no book`], bad: ['no book'] };
   const nb = stitch(now.map((x) => x?.bids), true), na = stitch(now.map((x) => x?.asks), false);
   const ob = stitchOld(old.map((x) => x?.bids), true), oa = stitchOld(old.map((x) => x?.asks), false);
   const mid = (nb[0][0] + na[0][0]) / 2;
 
-  console.log(`${coin}  mid ${mid.toPrecision(7)}`);
-  console.log(`  levels/side        ${ob.length}/${oa.length}  ->  ${nb.length}/${na.length}`);
-  for (const pct of [0.5, 2, 10]) {
-    console.log(`  widest hole ±${String(pct).padStart(4)}%   ${worstGap(ob, mid, pct).toFixed(4)}%  ->  ${worstGap(nb, mid, pct).toFixed(4)}%`);
-  }
-
+  const lines = [
+    `${coin}  mid ${mid.toPrecision(7)}`,
+    `  levels/side        ${ob.length}/${oa.length}  ->  ${nb.length}/${na.length}`,
+    ...[0.5, 2, 10].map((pct) =>
+      `  widest hole ±${String(pct).padStart(4)}%   ${worstGap(ob, mid, pct).toFixed(4)}%  ->  ${worstGap(nb, mid, pct).toFixed(4)}%`),
+  ];
+  const bad = [];
+  let n = 0;
   for (let i = 1; i < LAYERS.length; i++) {
     const L = now[i];
     if (!L) continue;
@@ -88,13 +104,35 @@ for (const coin of coins) {
     const before = cumToPrice(ob, cutB, true) + cumToPrice(oa, cutA, false);
     const rNew = ours / truth, rOld = before / truth;
     const ok = Math.abs(rNew - 1) < 0.002;
-    checks++; if (!ok) fails++;
+    n++;
     const tag = JSON.stringify(LAYERS[i]).replace(/["{}]/g, '').replace(/,/g, ' ');
-    console.log(`  ${ok ? 'ok  ' : 'FAIL'} to the [${tag}] edge (±${Math.abs(cutB / mid - 1) * 100 < 100 ? (Math.abs(cutB / mid - 1) * 100).toFixed(2) : '99+'}%):` +
+    if (!ok) bad.push(tag);
+    const dist = Math.abs(cutB / mid - 1) * 100;
+    lines.push(`  ${ok ? 'ok  ' : 'FAIL'} to the [${tag}] edge (±${dist < 100 ? dist.toFixed(2) : '99+'}%):` +
       ` before ${rOld.toFixed(4)}  ->  after ${rNew.toFixed(4)}`);
   }
+  return { lines, bad, n };
+}
+
+for (const coin of coins) {
+  let r = null, attempt = 0;
+  while (attempt < ATTEMPTS) {
+    attempt++;
+    r = await measure(coin);
+    if (!r.bad.length) break;
+    if (attempt < ATTEMPTS) await sleep(2500);
+  }
+  console.log(r.lines.join('\n'));
+  if (attempt > 1) {
+    console.log(r.bad.length
+      ? `  (still off after ${attempt} independent reads — that is not sampling skew)`
+      : `  (a layer disagreed on read ${attempt - 1}, agreed on read ${attempt}: the layers are fetched together but not atomically)`);
+  }
+  checks += r.n || 0;
+  fails += r.bad.length;
   console.log('');
 }
+
 console.log(fails === 0
   ? `all ${checks} layer reconciliations exact — the stitched book loses no depth at any seam`
   : `${fails}/${checks} reconciliations failed`);
