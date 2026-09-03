@@ -8,9 +8,7 @@ const CFG = {
     depth: (s) => `/api/v3/depth?symbol=${s}&limit=5000`,
     ticker: '/api/v3/ticker/24hr',
     ws: 'wss://stream.binance.com:9443/ws',
-    stream: (s) => `/${s.toLowerCase()}@depth@100ms`,
-    style: 'spot',
-    label: 'Binance',
+    style: 'from',      // events chain by U === lastUpdateId + 1
   },
   perp: {
     rest: 'https://fapi.binance.com',
@@ -18,9 +16,7 @@ const CFG = {
     depth: (s) => `/fapi/v1/depth?symbol=${s}&limit=1000`,
     ticker: '/fapi/v1/ticker/24hr',
     ws: 'wss://fstream.binance.com/ws',
-    stream: (s) => `/${s.toLowerCase()}@depth@100ms`,
-    style: 'futures',
-    label: 'Binance',
+    style: 'prev',      // events name their predecessor in `pu`
   },
 };
 
@@ -38,6 +34,27 @@ const tickers = ttlCache(async (market) => {
   for (const t of rows) m.set(t.symbol, +t.quoteVolume);
   return m;
 }, 45_000);
+
+/** The `depthUpdate` payload, shared with every Binance-API clone. */
+export const decodeDepthUpdate = (raw) => {
+  const e = JSON.parse(raw.toString());
+  if (!e.u) return null;
+  return {
+    bids: (e.b || []).map((r) => [+r[0], +r[1]]),
+    asks: (e.a || []).map((r) => [+r[0], +r[1]]),
+    from: e.U, to: e.u, prev: e.pu, ts: e.E,
+  };
+};
+
+/** The REST depth snapshot, same shape on every Binance-API clone. */
+export const fetchDepthSnapshot = async (rest, path) => {
+  const snap = await fetchJson(rest + path);
+  return {
+    bids: snap.bids.map((r) => [+r[0], +r[1]]),
+    asks: snap.asks.map((r) => [+r[0], +r[1]]),
+    version: snap.lastUpdateId,
+  };
+};
 
 export default {
   id: 'binance',
@@ -60,6 +77,13 @@ export default {
   },
 
   open(market, s, opts, emit, status) {
-    return openDiffBook(CFG[market], s, emit, status);
+    const c = CFG[market];
+    return openDiffBook({
+      label: 'Binance',
+      ws: `${c.ws}/${s.toLowerCase()}@depth@100ms`,
+      style: c.style,
+      decode: decodeDepthUpdate,
+      snapshot: () => fetchDepthSnapshot(c.rest, c.depth(s)),
+    }, emit, status);
   },
 };

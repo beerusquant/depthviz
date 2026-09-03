@@ -1,25 +1,35 @@
-import { fetchJson, reconnectingWs, BookSide } from '../util.js';
+import { reconnectingWs, BookSide } from '../util.js';
 
 const TAIL_MAX_GAP_MS = 30_000;   // longer outage => distrust the deep tail
 
 /**
- * The Binance snapshot+diff book, shared by every venue that speaks that
- * dialect. Aster is a Binance-futures API clone down to the `U`/`u`/`pu`
- * sequence fields, so it runs this engine rather than a second copy of it.
+ * The snapshot + versioned-diff order book, shared by every venue that speaks
+ * that dialect: Binance spot and perp, Aster, and both MEXC markets. Five of
+ * the thirteen feeds run this one implementation.
  *
- * cfg: { rest, depth(symbol) -> path, ws, stream(symbol) -> path,
- *        style: 'spot' | 'futures', label }
+ * They differ only in details a config can carry:
  *
- * The two dialects differ in exactly two places, both about sequencing:
- *   spot     — events chain by `U === lastUpdateId + 1`, and the first event
- *              after a snapshot must satisfy `U <= uid + 1 <= u`.
- *   futures  — events chain by `pu === lastUpdateId`, and the first event
- *              after a snapshot must satisfy `U <= uid <= u`.
+ *   ws, subscribe, pingMs, pingPayload   how to open the stream
+ *   decode(raw)                          bytes -> { bids, asks, from, to, prev?, ts? }
+ *   snapshot()                           -> { bids, asks, version, ts? }
+ *   style                                how events chain (see below)
+ *   label                                what to call the venue in a status line
+ *
+ * Sizes are whatever the decode/snapshot pair produces, so a venue quoting in
+ * contracts converts there and the engine never has to know about it.
+ *
+ * The two chaining styles are the only real divergence:
+ *   'from' — an event follows when `from === version + 1`, and the first event
+ *            after a snapshot must satisfy `from <= v+1 <= to`. Binance spot,
+ *            both MEXC markets.
+ *   'prev' — the event names its own predecessor: `prev === version`, and the
+ *            first one after a snapshot satisfies `from <= v <= to`. Binance
+ *            futures and Aster, which is a Binance-futures API clone.
  */
-export function openDiffBook(cfg, s, emit, status) {
+export function openDiffBook(cfg, emit, status) {
   const bids = new BookSide(true);
   const asks = new BookSide(false);
-  let lastUpdateId = null;   // null => not synced yet
+  let version = null;        // null => not synced yet
   let buffer = [];
   let syncing = false;
   let closed = false;
@@ -28,54 +38,52 @@ export function openDiffBook(cfg, s, emit, status) {
 
   const applyEvt = (e) => {
     const now = Date.now();
-    for (const r of e.b || []) bids.set(r[0], r[1], now);
-    for (const r of e.a || []) asks.set(r[0], r[1], now);
-    lastUpdateId = e.u;
+    for (const [p, q] of e.bids) bids.set(p, q, now);
+    for (const [p, q] of e.asks) asks.set(p, q, now);
+    version = e.to;
     lastGoodAt = now;
   };
 
   const publish = (ts) => emit({
     bids: bids.toArray(), asks: asks.toArray(), ts, source: 'ws',
-    // The book reaches far past the capped snapshot only because diffs for
-    // every price level are applied on top of it, so depth outside the
-    // snapshot's span is a lower bound that grows with uptime.
+    // The book reaches past a capped snapshot only because diffs for every
+    // price level are applied on top of it, so depth outside the snapshot's
+    // span is a lower bound that grows with uptime.
     accum: { since: tailSince },
   });
 
-  // Fetch a REST snapshot, then replay buffered diffs on top of it.
+  // Fetch a snapshot, then replay the diffs buffered while it was in flight.
   const resync = async () => {
     if (syncing || closed) return;
     syncing = true;
-    lastUpdateId = null;
+    version = null;
     try {
-      const snap = await fetchJson(cfg.rest + cfg.depth(s));
+      const snap = await cfg.snapshot();
       if (closed) return;
-      // Keep the accumulated deep tail across a resync, but only if the gap
-      // was short: over TAIL_MAX_GAP_MS, levels out there may have been
-      // cancelled unseen and would show as phantom depth.
+      // Keep the accumulated deep tail across a resync, but only if the gap was
+      // short: over TAIL_MAX_GAP_MS, levels out there may have been cancelled
+      // unseen and would stand as phantom depth.
       const keepTail = lastGoodAt > 0 && Date.now() - lastGoodAt < TAIL_MAX_GAP_MS;
       const kept = bids.applySnapshot(snap.bids, { keepTail })
                  + asks.applySnapshot(snap.asks, { keepTail });
-      if (!keepTail || !tailSince) tailSince = Date.now();
-      if (keepTail && kept === 0) tailSince = Date.now();
-      const uid = snap.lastUpdateId;
-      // Drop stale events, then validate the first one bridges the snapshot.
-      const pending = buffer.filter((e) => e.u > uid);
+      if (!keepTail || !kept || !tailSince) tailSince = Date.now();
+      const v = snap.version;
+      const pending = buffer.filter((e) => e.to > v);
       buffer = [];
-      lastUpdateId = uid;
+      version = v;
       let first = true;
       for (const e of pending) {
         if (first) {
-          const ok = cfg.style === 'spot'
-            ? e.U <= uid + 1 && e.u >= uid + 1
-            : e.U <= uid && e.u >= uid;
+          const ok = cfg.style === 'prev'
+            ? e.from <= v && e.to >= v
+            : e.from <= v + 1 && e.to >= v + 1;
           if (!ok) { syncing = false; setTimeout(resync, 400); return; }
           first = false;
         }
         applyEvt(e);
       }
       status('open');
-      publish(Date.now());
+      publish(snap.ts || Date.now());
     } catch (err) {
       status('error', `${cfg.label} snapshot: ${err.message}`);
       if (!closed) setTimeout(() => { syncing = false; resync(); }, 1500);
@@ -84,25 +92,29 @@ export function openDiffBook(cfg, s, emit, status) {
     syncing = false;
   };
 
-  const conn = reconnectingWs(cfg.ws + cfg.stream(s), {
-    onOpen: () => { buffer = []; lastUpdateId = null; syncing = false; resync(); },
+  const conn = reconnectingWs(cfg.ws, {
+    onOpen: (send) => {
+      buffer = []; version = null; syncing = false;
+      cfg.subscribe?.(send);
+      resync();
+    },
     onMessage: (raw) => {
-      const e = JSON.parse(raw.toString());
-      if (!e.u) return;
-      if (lastUpdateId === null) { buffer.push(e); if (buffer.length > 3000) buffer.shift(); return; }
-      const contiguous = cfg.style === 'spot' ? e.U === lastUpdateId + 1 : e.pu === lastUpdateId;
+      const e = cfg.decode(raw);
+      if (!e || !isFinite(e.to)) return;
+      if (version === null) { buffer.push(e); if (buffer.length > 3000) buffer.shift(); return; }
+      const contiguous = cfg.style === 'prev' ? e.prev === version : e.from === version + 1;
       if (!contiguous) {
-        if (e.u <= lastUpdateId) return; // already applied
+        if (e.to <= version) return; // already applied
         status('reconnecting', `${cfg.label} diff gap, resyncing`);
         buffer = [e];
         resync();
         return;
       }
       applyEvt(e);
-      publish(e.E);
+      publish(e.ts || Date.now());
     },
     onStatus: (st, detail) => { if (st !== 'open') status(st, detail); },
-  });
+  }, { pingMs: cfg.pingMs, pingPayload: cfg.pingPayload });
 
   return {
     close() { closed = true; conn.close(); },

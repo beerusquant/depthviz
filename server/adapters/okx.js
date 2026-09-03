@@ -91,6 +91,32 @@ export default {
       return out;
     };
 
+    // Cumulative size from the top of book out to `edge`, on either side.
+    const cumTo = (rows, edge, deeper) => {
+      let q = 0;
+      for (const [p, sz] of rows) { if (deeper(p, edge)) break; q += sz; }
+      return q;
+    };
+    const measureDrift = () => {
+      const wb = bids.toArray(), wa = asks.toArray();
+      if (!wb.length || !wa.length || !tailBids.length || !tailAsks.length) return null;
+      const ws = cumTo(wb, wb[wb.length - 1][0], (p, e) => p < e)
+               + cumTo(wa, wa[wa.length - 1][0], (p, e) => p > e);
+      const rest = cumTo(tailBids, wb[wb.length - 1][0], (p, e) => p < e)
+                 + cumTo(tailAsks, wa[wa.length - 1][0], (p, e) => p > e);
+      return rest > 0 ? Math.abs(ws - rest) / rest : null;
+    };
+
+    // Splice the polled tail onto the live ws book, keeping each side sorted
+    // outward from mid and dropping any tail level the ws already covers.
+    const merge = (wsRows, tail, deeper) => {
+      if (!wsRows.length || !tail.length) return wsRows.length ? wsRows : tail;
+      const edge = wsRows[wsRows.length - 1][0];
+      const out = wsRows.slice();
+      for (const lv of tail) if (deeper(lv[0], edge)) out.push(lv);
+      return out;
+    };
+
     const pollFull = async () => {
       if (stopped) return;
       try {
@@ -117,33 +143,6 @@ export default {
         }
       } catch { /* keep the previous tail; the ws book is unaffected */ }
       if (!stopped) setTimeout(pollFull, 1000);
-    };
-    pollFull();
-
-    // Splice the polled tail onto the live ws book, keeping each side sorted
-    // outward from mid and dropping any tail level the ws already covers.
-    // Cumulative size on both sides of the socket's span, ws vs REST.
-    const cumTo = (rows, edge, deeper) => {
-      let q = 0;
-      for (const [p, sz] of rows) { if (deeper(p, edge)) break; q += sz; }
-      return q;
-    };
-    const measureDrift = () => {
-      const wb = bids.toArray(), wa = asks.toArray();
-      if (!wb.length || !wa.length || !tailBids.length || !tailAsks.length) return null;
-      const ws = cumTo(wb, wb[wb.length - 1][0], (p, e) => p < e)
-               + cumTo(wa, wa[wa.length - 1][0], (p, e) => p > e);
-      const rest = cumTo(tailBids, wb[wb.length - 1][0], (p, e) => p < e)
-                 + cumTo(tailAsks, wa[wa.length - 1][0], (p, e) => p > e);
-      return rest > 0 ? Math.abs(ws - rest) / rest : null;
-    };
-
-    const merge = (wsRows, tail, deeper) => {
-      if (!wsRows.length || !tail.length) return wsRows.length ? wsRows : tail;
-      const edge = wsRows[wsRows.length - 1][0];
-      const out = wsRows.slice();
-      for (const lv of tail) if (deeper(lv[0], edge)) out.push(lv);
-      return out;
     };
 
     const conn = reconnectingWs(WS, {
@@ -182,6 +181,13 @@ export default {
       },
       onStatus: status,
     }, { pingMs: 20_000, pingPayload: 'ping' });
+
+    // Started only now: pollFull() reaches for `conn` to force a resubscribe when
+    // the two transports disagree, and for measureDrift() to compare them. Both
+    // used to be declared below this call and were saved only by the first
+    // `await` landing after the rest of the function had run — a temporal dead
+    // zone waiting for someone to add an early return.
+    pollFull();
 
     return { close() { stopped = true; conn.close(); } };
   },

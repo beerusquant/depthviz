@@ -1,6 +1,5 @@
-import { fetchJson, ttlCache, poller, reconnectingWs, BookSide, pbFields, watchdogFallback } from '../util.js';
-
-const TAIL_MAX_GAP_MS = 30_000;   // longer outage => distrust the deep tail
+import { fetchJson, ttlCache, poller, pbFields, watchdogFallback } from '../util.js';
+import { openDiffBook } from './diff-book.js';
 
 const SPOT = 'https://api.mexc.com';
 const FUT = 'https://contract.mexc.com';
@@ -59,160 +58,62 @@ function decodeSpotDepth(buf) {
   };
 }
 
-function openSpot(s, emit, status) {
-  const bids = new BookSide(true);
-  const asks = new BookSide(false);
-  let version = null, buffer = [], syncing = false, closed = false;
-  let lastGoodAt = 0, tailSince = 0;
+/**
+ * Both MEXC markets are snapshot + versioned-diff books, so they are two
+ * configs for the shared engine rather than two implementations. They differ in
+ * transport (protobuf frames on spot, JSON on perp), in what the sequence
+ * fields are called, and in the fact that perp quotes contracts — all of which
+ * a decode/snapshot pair absorbs.
+ */
+const spotBook = (s) => ({
+  label: 'MEXC spot',
+  ws: SPOT_WS,
+  subscribe: (send) => send({ method: 'SUBSCRIPTION', params: [`spot@public.aggre.depth.v3.api.pb@100ms@${s}`] }),
+  pingMs: 20_000,
+  pingPayload: JSON.stringify({ method: 'PING' }),
+  style: 'from',
+  decode: (raw) => {
+    if (!Buffer.isBuffer(raw) || raw[0] === 0x7b) return null; // '{' -> control JSON
+    return decodeSpotDepth(raw);
+  },
+  snapshot: async () => {
+    const snap = await fetchJson(`${SPOT}/api/v3/depth?symbol=${s}&limit=5000`);
+    return {
+      bids: snap.bids.map((r) => [+r[0], +r[1]]),
+      asks: snap.asks.map((r) => [+r[0], +r[1]]),
+      version: snap.lastUpdateId,
+    };
+  },
+});
 
-  const publish = (ts, source = 'ws') => emit({
-    bids: bids.toArray(), asks: asks.toArray(), ts, source,
-    accum: { since: tailSince },
-  });
-  const applyEvt = (e) => {
-    const now = Date.now();
-    for (const [p, q] of e.bids) bids.set(p, q, now);
-    for (const [p, q] of e.asks) asks.set(p, q, now);
-    version = e.to;
-    lastGoodAt = now;
-  };
-
-  const resync = async () => {
-    if (syncing || closed) return;
-    syncing = true;
-    version = null;
-    try {
-      const snap = await fetchJson(`${SPOT}/api/v3/depth?symbol=${s}&limit=5000`);
-      if (closed) return;
-      const keepTail = lastGoodAt > 0 && Date.now() - lastGoodAt < TAIL_MAX_GAP_MS;
-      const kept = bids.applySnapshot(snap.bids, { keepTail })
-                 + asks.applySnapshot(snap.asks, { keepTail });
-      if (!keepTail || !kept || !tailSince) tailSince = Date.now();
-      const uid = snap.lastUpdateId;
-      const pending = buffer.filter((e) => e.to > uid);
-      buffer = [];
-      version = uid;
-      let first = true;
-      for (const e of pending) {
-        if (first) {
-          if (!(e.from <= uid + 1 && e.to >= uid + 1)) { syncing = false; setTimeout(resync, 400); return; }
-          first = false;
-        }
-        applyEvt(e);
-      }
-      publish(Date.now());
-    } catch (err) {
-      status('error', `MEXC spot snapshot: ${err.message}`);
-      if (!closed) setTimeout(() => { syncing = false; resync(); }, 1500);
-      return;
-    }
-    syncing = false;
-  };
-
-  const conn = reconnectingWs(SPOT_WS, {
-    onOpen: (send) => {
-      buffer = []; version = null; syncing = false;
-      send({ method: 'SUBSCRIPTION', params: [`spot@public.aggre.depth.v3.api.pb@100ms@${s}`] });
-      resync();
-    },
-    onMessage: (raw) => {
-      if (!Buffer.isBuffer(raw) || raw[0] === 0x7b) return; // '{' -> control JSON
-      const e = decodeSpotDepth(raw);
-      if (!e || !isFinite(e.to)) return;
-      if (version === null) { buffer.push(e); if (buffer.length > 3000) buffer.shift(); return; }
-      if (e.from !== version + 1) {
-        if (e.to <= version) return;
-        status('reconnecting', 'MEXC spot diff gap, resyncing');
-        buffer = [e];
-        resync();
-        return;
-      }
-      applyEvt(e);
-      publish(Date.now());
-    },
-    onStatus: (st, d) => { if (st !== 'open') status(st, d); },
-  }, { pingMs: 20_000, pingPayload: JSON.stringify({ method: 'PING' }) });
-
-  return { close() { closed = true; conn.close(); } };
-}
-
-function openPerp(s, cs, emit, status) {
-  const bids = new BookSide(true);
-  const asks = new BookSide(false);
-  let version = null, buffer = [], syncing = false, closed = false;
-  let lastGoodAt = 0, tailSince = 0;
-
-  const publish = (ts, source = 'ws') => emit({
-    bids: bids.toArray(), asks: asks.toArray(), ts, source,
-    accum: { since: tailSince },
-  });
-  const applyEvt = (d) => {
-    const now = Date.now();
-    for (const r of d.bids || []) bids.set(r[0], +r[1] * cs, now);
-    for (const r of d.asks || []) asks.set(r[0], +r[1] * cs, now);
-    version = d.end ?? d.version;
-    lastGoodAt = now;
-  };
-
-  const resync = async () => {
-    if (syncing || closed) return;
-    syncing = true;
-    version = null;
-    try {
-      const j = await fetchJson(`${FUT}/api/v1/contract/depth/${s}`);
-      if (closed) return;
-      const d = j.data || {};
-      const keepTail = lastGoodAt > 0 && Date.now() - lastGoodAt < TAIL_MAX_GAP_MS;
-      const kept = bids.applySnapshot((d.bids || []).map((r) => [+r[0], +r[1] * cs]), { keepTail })
-                 + asks.applySnapshot((d.asks || []).map((r) => [+r[0], +r[1] * cs]), { keepTail });
-      if (!keepTail || !kept || !tailSince) tailSince = Date.now();
-      const v = +d.version;
-      const pending = buffer.filter((e) => (e.end ?? e.version) > v);
-      buffer = [];
-      version = v;
-      let first = true;
-      for (const e of pending) {
-        if (first) {
-          if (!(e.begin <= v + 1 && (e.end ?? e.version) >= v + 1)) { syncing = false; setTimeout(resync, 400); return; }
-          first = false;
-        }
-        applyEvt(e);
-      }
-      publish(d.timestamp || Date.now());
-    } catch (err) {
-      status('error', `MEXC perp snapshot: ${err.message}`);
-      if (!closed) setTimeout(() => { syncing = false; resync(); }, 1500);
-      return;
-    }
-    syncing = false;
-  };
-
-  const conn = reconnectingWs(FUT_WS, {
-    onOpen: (send) => {
-      buffer = []; version = null; syncing = false;
-      send({ method: 'sub.depth', param: { symbol: s } });
-      resync();
-    },
-    onMessage: (raw) => {
-      const msg = JSON.parse(raw.toString());
-      if (msg.channel !== 'push.depth' || !msg.data) return;
-      const d = msg.data;
-      if (version === null) { buffer.push(d); if (buffer.length > 3000) buffer.shift(); return; }
-      if (d.begin !== version + 1) {
-        if ((d.end ?? d.version) <= version) return;
-        status('reconnecting', 'MEXC perp diff gap, resyncing');
-        buffer = [d];
-        resync();
-        return;
-      }
-      applyEvt(d);
-      publish(Date.now());
-    },
-    onStatus: (st, dd) => { if (st !== 'open') status(st, dd); },
-  }, { pingMs: 15_000, pingPayload: JSON.stringify({ method: 'ping' }) });
-
-  return { close() { closed = true; conn.close(); } };
-}
+const perpBook = (s, cs) => ({
+  label: 'MEXC perp',
+  ws: FUT_WS,
+  subscribe: (send) => send({ method: 'sub.depth', param: { symbol: s } }),
+  pingMs: 15_000,
+  pingPayload: JSON.stringify({ method: 'ping' }),
+  style: 'from',
+  decode: (raw) => {
+    const msg = JSON.parse(raw.toString());
+    if (msg.channel !== 'push.depth' || !msg.data) return null;
+    const d = msg.data;
+    return {
+      bids: (d.bids || []).map((r) => [+r[0], +r[1] * cs]),
+      asks: (d.asks || []).map((r) => [+r[0], +r[1] * cs]),
+      from: d.begin, to: d.end ?? d.version,
+    };
+  },
+  snapshot: async () => {
+    const j = await fetchJson(`${FUT}/api/v1/contract/depth/${s}`);
+    const d = j.data || {};
+    return {
+      bids: (d.bids || []).map((r) => [+r[0], +r[1] * cs]),
+      asks: (d.asks || []).map((r) => [+r[0], +r[1] * cs]),
+      version: +d.version,
+      ts: d.timestamp,
+    };
+  },
+});
 
 /** REST polling, kept as the safety net behind both websockets. */
 function pollBook(market, s, cs, emit, status) {
@@ -259,7 +160,7 @@ export default {
     // If the websocket has not produced a book in 8s, poll until it recovers.
     const wd = watchdogFallback(8000, () => pollBook(market, s, cs, emit, status));
     const wrapped = (book) => { wd.ok(); emit(book); };
-    const conn = market === 'spot' ? openSpot(s, wrapped, status) : openPerp(s, cs, wrapped, status);
+    const conn = openDiffBook(market === 'spot' ? spotBook(s) : perpBook(s, cs), wrapped, status);
     return { close() { wd.close(); conn.close(); } };
   },
 };

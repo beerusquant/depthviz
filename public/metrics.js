@@ -2,6 +2,11 @@
 
 export const OFI_THRESHOLD = 0.15;
 const NBINS = 60;
+// A level sitting exactly on a boundary belongs inside it. Without this, mid
+// 100 and a level at 95 gives |95/100 - 1| * 100 = 5.000000000000004, and the
+// "-5% depth" figure silently drops the very level that defines it — round
+// numbers are exactly where real books put their size.
+const EDGE = 1e-9;
 
 function walk(rows, mid, range) {
   const pts = [[0, 0]];
@@ -13,9 +18,9 @@ function walk(rows, mid, range) {
     const a = Math.abs(pct);
     const n = p * q;
     cum += n;
-    if (a <= 2) d2 = cum;
-    if (a <= 5) d5 = cum;
-    if (a <= range) {
+    if (a <= 2 + EDGE) d2 = cum;
+    if (a <= 5 + EDGE) d5 = cum;
+    if (a <= range + EDGE) {
       pts.push([pct, cum]);
       sumQ += q;
       sumPQ += n;

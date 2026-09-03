@@ -1,9 +1,9 @@
 import { adapters } from './adapters/index.js';
 
-const CLIP_PCT = 12;       // never ship levels further than this from mid
-const EXACT_PCT = 0.6;     // levels this close to mid are shipped verbatim
-const EXACT_MAX = 2000;    // hard cap on verbatim levels per side
-const BUCKET_BPS = 5;      // geometric bucket width beyond the exact zone
+export const CLIP_PCT = 12;    // never ship levels further than this from mid
+export const EXACT_PCT = 0.6;  // levels this close to mid are shipped verbatim
+export const EXACT_MAX = 2000; // hard cap on verbatim levels per side
+export const BUCKET_BPS = 5;   // geometric bucket width beyond the exact zone
 const THROTTLE_MS = 200;
 
 const feeds = new Map(); // key -> Feed
@@ -16,7 +16,7 @@ const feeds = new Map(); // key -> Feed
 // The old "keep the 2500 nearest levels" rule silently truncated the curve:
 // on Binance spot BTC it shipped +-0.62% of a book that reached +-11%, hiding
 // 64% of the depth inside +-10%.
-function trim(rows, mid) {
+export function trim(rows, mid) {
   const out = [];
   const step = Math.log(1 + BUCKET_BPS / 10_000);
   let bucket = null;   // current bucket index, null while still verbatim

@@ -1,0 +1,44 @@
+name: tests
+
+# The four suites below need no network and no browser: they are the arithmetic
+# the whole app rests on — the resync that decides whether accumulated depth
+# survives, the Hyperliquid layer stitch, the payload reduction, and the metrics
+# every panel number comes from. The checks that DO need the network (ccxt
+# cross-check, the venue verifiers) run hourly against the live service instead;
+# they cannot live here, because a red build caused by an exchange having a bad
+# minute teaches people to ignore the build.
+on:
+  push:
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        node: ['20', '22']   # package.json declares engines >=20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
+          cache: npm
+      # Runtime deps only: the tests import server/ and public/ modules, never
+      # ccxt or playwright, so the install stays seconds rather than minutes.
+      - run: npm ci --omit=dev
+      - run: npm test
+
+  no-html-from-exchanges:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      # Symbol names come from exchange listings and are attacker-choosable.
+      # tools/smoke-ui.mjs proves the menus render them as text, but that needs a
+      # browser; this is the cheap guard that the door stays shut.
+      - name: no innerHTML in the front end
+        run: |
+          if grep -rn 'innerHTML' public/; then
+            echo "::error::exchange-supplied strings must be written with textContent"
+            exit 1
+          fi
+          echo "no innerHTML in public/"

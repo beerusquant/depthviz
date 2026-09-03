@@ -237,6 +237,30 @@ ssh -L 8888:127.0.0.1:8888 <your-host>     # then http://127.0.0.1:8888
 Install devDependencies on the host too (`npm install --include=dev`) and every
 check in this README runs there as well.
 
+## What the tests cover, and what they cannot
+
+`npm test` is four suites, 52 assertions, no network and no browser — they run
+in CI on Node 20 and 22 on every push:
+
+| suite | what it pins |
+|---|---|
+| `test-book` | `BookSide.applySnapshot`: whether accumulated depth survives a resync, and when it must not |
+| `test-stitch` | the Hyperliquid layer reconciliation and its cumulative identity |
+| `test-trim` | that reducing the payload preserves cumulative quantity, notional, VWAP **and reach** |
+| `test-metrics` | every number in the panel — depth, VWAP, OFI, the truncation flags |
+
+The last two were written after the fact, for the two functions that had no
+coverage at all despite producing everything on screen. Writing them was worth
+it immediately: `computeMetrics` was dropping a level sitting **exactly** on a
+boundary, because `|95/100 - 1| * 100` is `5.000000000000004` in binary floating
+point, so the "-5% depth" figure excluded the very level that defines it. Round
+numbers are exactly where real books put size.
+
+What CI deliberately does not run: anything needing the network. A build that
+goes red because an exchange had a bad minute teaches people to ignore the
+build. Those checks run hourly against the live service instead, where a failure
+is information rather than noise.
+
 ## The note line, and when it appears
 
 The chart draws nothing past where the venue's data ends — the cumulative curve
@@ -326,10 +350,16 @@ Drop a module in `server/adapters/` exporting
 }
 ```
 
-and register it in `server/adapters/index.js`. If the venue speaks the Binance
-snapshot+diff dialect, do not re-implement it: `server/adapters/diff-book.js`
-holds that engine (`style: 'spot'` for `U === lastUpdateId + 1`, `'futures'` for
-`pu === lastUpdateId`) and both Binance and Aster are thin config on top of it.
+and register it in `server/adapters/index.js`. If the venue maintains its book
+by snapshot + versioned diffs, do not re-implement it: `server/adapters/diff-book.js`
+is that engine, and **five of the thirteen feeds run it** — Binance spot and
+perp, Aster, and both MEXC markets. A venue supplies `decode(raw)` and
+`snapshot()`, plus how its events chain: `style: 'from'` when the next event
+declares `from === version + 1` (Binance spot, MEXC), `'prev'` when each event
+names its predecessor (Binance futures, and Aster which clones that API). Sizes
+are whatever decode produces, so a venue quoting in contracts converts there and
+the engine never learns about contracts at all. Folding MEXC in took it from 265
+lines to 166.
 `open` may return a promise (OKX, MEXC and Lighter do — they need contract sizes,
 or a `market_id`, first) and resolves to `{ close() }`. It
 pushes
@@ -352,7 +382,7 @@ node tools/smoke-feeds.mjs         # subscribes to all 13 exchange/market combos
 node tools/smoke-ui.mjs            # drives the real page in Chrome: every venue, search, range, copy, PNG
 node tools/verify-conversions.mjs  # re-runs the unit-conversion cross-checks above against live data
 npm run verify:hyperliquid         # the only assembled book: every stitched layer vs its own measurement
-npm test                           # BookSide.applySnapshot resync semantics, no network
+npm test                           # 52 assertions over the four pure cores, no network
 npm run crosscheck                 # tools/crosscheck-ccxt.mjs: ccxt as an independent second opinion (server must be up)
 npm run crosscheck -- mexc --repeat 20   # sample one venue repeatedly and report the ratio distribution
 npm run verify:bitunix             # the venue ccxt cannot judge, checked against itself and its peers
