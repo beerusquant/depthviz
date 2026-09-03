@@ -30,6 +30,26 @@ it does not announce itself.
   to us forever. The figure can only go up. The UI says so; the code must not
   forget it.
 
+## 1 bis. Never invent a clock
+
+A book carries two timestamps and they are not interchangeable: `tsVenue` is the
+exchange's own event time, `tsRecv` is when the frame reached this process. An
+adapter reports the venue's time **or `null`** — never `Date.now()` as a stand-in.
+Filling it locally makes a feed with no clock look identical to one with a
+perfect one, and prints an upstream latency of zero, which is exactly the kind of
+number nobody questions.
+
+Writing that rule found a real bug: **MEXC reported no venue clock on either
+market while the venue was stamping every frame** — `data.cts` and `msg.ts` on
+perp, field 6 of the spot protobuf, all three dropped by the decoders. Both feeds
+now measure ~90–120 ms. The delta is displayed raw, negative included: a negative
+one is clock skew against the exchange, which is information, not noise.
+
+Corollary: `state` is not health. It is set by the last status event, so a feed
+that reconnects every thirty seconds reads `live` between drops. The measurement
+that cannot lie is the age of the last book — `/api/feeds` reports it, and the
+panel refreshes it every second so a dead feed cannot freeze its own staleness.
+
 ## 2. ccxt is a judge, never a source
 
 `fetchOrderBook` returns OKX and MEXC sizes in **raw contracts**: ccxt exposes
@@ -150,6 +170,11 @@ A change that was not executed does not exist. Depending on what you touch:
 | an adapter, a unit conversion | `npm run crosscheck` **and** `node tools/verify-conversions.mjs` |
 | Bitunix (absent from ccxt) | `npm run verify:bitunix` |
 | the UI, the layout, the transport | `node tools/smoke-feeds.mjs`, and `smoke-ui.mjs` if the rendering moves |
+| `shared/metrics.js`, `/api/depth` | `npm test` **and** a `curl` of the route — the browser and the API share one implementation, so a change to it moves both |
+
+`smoke-feeds.mjs` prints a `clock=` column per venue: `venue+NNms` where the
+exchange stamps its frames, `none` where it does not. A venue that silently stops
+stamping shows up there.
 
 `smoke-ui.mjs` ends with a mobile pass (390x844 and rotated) that asserts reach,
 not looks: no sideways scroll, every control on screen and tall enough for a

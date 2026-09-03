@@ -73,7 +73,7 @@ export default {
         const j = await fetchJson(`${SPOT}/api/spot/v1/market/depth?symbol=${s}&limit=200`);
         const d = j.data || {};
         const conv = (rows) => (rows || []).map((r) => [+r.price, +r.volume]);
-        emit({ bids: conv(d.bids), asks: conv(d.asks), ts: Date.now(), source: 'poll' });
+        emit({ bids: conv(d.bids), asks: conv(d.asks), ts: null, source: 'poll' });
         if (first) { first = false; status('open'); }
       }, 1000, (e) => status('error', `Bitunix: ${e.message}`));
     }
@@ -89,7 +89,7 @@ export default {
         emit({
           bids: (m.data.b || []).map((r) => [+r[0], +r[1]]),
           asks: (m.data.a || []).map((r) => [+r[0], +r[1]]),
-          ts: m.ts || Date.now(),
+          ts: m.ts ?? null,
           source: 'ws',
         });
       },

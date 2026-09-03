@@ -100,6 +100,22 @@ export function fmtPct(v, d = 3) {
   return v == null || !isFinite(v) ? 'n/a' : `${v.toFixed(d)}%`;
 }
 
+/**
+ * How old the book on screen is, and how long it took to get here.
+ *
+ * Two separate facts, and the second one is often missing: several feeds carry
+ * no exchange timestamp at all (a REST poll, Coinbase's opening frame), and the
+ * honest answer there is to say so rather than print a latency of zero. The
+ * venue delta is shown raw, negative included — a negative one is clock skew
+ * between us and the exchange, which is worth seeing, not hiding.
+ */
+export function fmtAge({ tsRecv, tsVenue, now = Date.now() }) {
+  if (!tsRecv) return 'n/a';
+  const age = Math.max(0, now - tsRecv);
+  const s = age < 1000 ? `${age}ms` : `${(age / 1000).toFixed(1)}s`;
+  return tsVenue != null ? `${s} \u00b7 venue\u2192us ${tsRecv - tsVenue}ms` : `${s} \u00b7 no venue clock`;
+}
+
 /** Panel rows, in the order they are rendered and copied. */
 export function panelRows(m, meta) {
   return [
@@ -118,5 +134,6 @@ export function panelRows(m, meta) {
     ['-5% Depth', fmtUsd(m.depthMinus5), 'fg'],
     ['Total Depth', fmtUsd(m.totalDepth), 'fg'],
     ['OFI', `${m.ofi.toFixed(3)} ${m.ofiLabel}`, m.ofi > OFI_THRESHOLD ? 'bid' : m.ofi < -OFI_THRESHOLD ? 'ask' : 'fg'],
+    ['Book Age', fmtAge(meta), 'fg'],
   ];
 }

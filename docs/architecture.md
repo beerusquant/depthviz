@@ -126,6 +126,58 @@ below was measured against a live venue, not assumed.
    selector; `Bid Depth`/`Ask Depth` are the cumulative notional inside the
    *selected* range. They coincide when the book does not reach the threshold.
 
+## The hub, and what it is allowed to do to a book
+
+The hub is the only place a book is touched between an adapter and a viewer, so
+the constraints on it are worth stating.
+
+**Two clocks, never conflated.** A book carries `tsVenue` — the exchange's own
+event time — and `tsRecv`, when the frame reached this process. `tsVenue` is
+`null` wherever the venue stamps nothing: a REST poll, Coinbase's opening frame,
+every snapshot. It used to be filled with `Date.now()` on those paths, which made
+a feed with no clock indistinguishable from one with a perfect one, and printed a
+latency of zero that nobody would think to question. The rule now is that an
+adapter reports the venue's time or `null`, and the hub adds its own — so
+`tsRecv - tsVenue` is upstream latency where it exists and is absent where it
+does not.
+
+Writing that rule found two bugs. **MEXC reported no venue clock on either
+market while the venue was stamping every frame**: the perp payload carries
+`data.cts` (when the book changed) and `msg.ts` (when the frame was sent), and
+the spot protobuf carries the send time in field 6 — all three were being
+dropped by the decoders. Both feeds now measure ~90–120 ms, in line with the
+other venues. The delta is also shown raw, negative included: a negative one is
+clock skew between us and the exchange, which is worth seeing rather than
+clamping to zero.
+
+**A slow client drops frames, it does not queue them.** `broadcast` skips any
+socket whose `bufferedAmount` is past 1 MB. A book is a snapshot, not a log: the
+next frame is strictly better than the one the client has not read yet, and
+without this a single stalled viewer on a slow link grows a server-side buffer
+without bound. Skipped frames are counted and reported by `/api/feeds`.
+
+**A feed with no viewers is kept for 30 s.** Switching venue and back, or polling
+`/api/depth`, used to close the upstream connection and reopen it a moment later
+— which is both slower and rude to an exchange whose rate limit is shared with
+whatever else the host runs.
+
+**`state` is not health.** It is set by the last status event, so a feed that
+reconnects every thirty seconds still reads `live` between drops, and one whose
+socket went quiet without closing reads `live` forever. `/api/feeds` therefore
+reports `ageMs` — time since the last book — alongside reconnect, error and
+dropped-frame counters, and the panel shows the same age on screen, refreshed
+once a second so a stalled feed cannot freeze its own staleness.
+
+## One implementation of every number
+
+`shared/metrics.js` computes depth, VWAP, OFI and the truncation flags, and both
+the browser and the server import it — the page from `/shared/metrics.js`, the
+API by path. It used to live in `public/`, which meant the server did not know
+any of its own numbers: getting a depth figure out of this tool required opening
+Chrome and pressing COPY, and nothing could log or alert on one. Moving it also
+means `tools/test-metrics.mjs` now covers the API's arithmetic, not just the
+chart's.
+
 ## Unit conversions, and how they were verified
 
 Three venues do not quote book sizes in base units. Getting these wrong is

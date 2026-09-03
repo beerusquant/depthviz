@@ -146,7 +146,11 @@ export default {
       const bids = stitch(snaps.map((x) => x?.bids), true);
       const asks = stitch(snaps.map((x) => x?.asks), false);
       if (!bids.length || !asks.length) return;
-      emit({ bids, asks, ts: Math.max(...snaps.filter(Boolean).map((x) => x.ts)), source: 'ws' });
+      // The stitched book is as recent as its freshest layer. `null` coerces to
+      // 0 through Math.max, which would silently date the book to 1970 if the
+      // venue ever stopped stamping its frames, so the layers are filtered.
+      const stamps = snaps.filter(Boolean).map((x) => x.ts).filter(Number.isFinite);
+      emit({ bids, asks, ts: stamps.length ? Math.max(...stamps) : null, source: 'ws' });
     };
 
     // One socket per layer: the l2Book payload carries only `coin`, `time` and
@@ -162,7 +166,7 @@ export default {
         snaps[i] = {
           bids: b.map((l) => [+l.px, +l.sz]),
           asks: a.map((l) => [+l.px, +l.sz]),
-          ts: msg.data.time || Date.now(),
+          ts: msg.data.time ?? null,
         };
         publish();
       },

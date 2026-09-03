@@ -7,7 +7,7 @@
  * of bid depth" was never checked against anything.
  *   node tools/test-metrics.mjs
  */
-import { computeMetrics, fmtUsd, fmtPct, OFI_THRESHOLD } from '../public/metrics.js';
+import { computeMetrics, fmtUsd, fmtPct, fmtAge, OFI_THRESHOLD } from '../shared/metrics.js';
 
 let pass = 0, fail = 0;
 const ok = (name, cond, detail = '') => {
@@ -108,6 +108,23 @@ const book = {
   ok('formatting is human and unit-safe',
      fmtUsd(1234) === '$1.23K' && fmtUsd(1.5e6) === '$1.50M' && fmtUsd(null) === 'n/a'
      && fmtPct(0.12345) === '0.123%');
+}
+
+{
+  // Book age is the panel's only claim about time, and the two clocks behind it
+  // mean different things: a feed with no exchange timestamp must say so rather
+  // than report a latency it never measured.
+  const t = 1_700_000_000_000;
+  ok('a venue clock gives both the age and the upstream latency',
+     fmtAge({ tsRecv: t, tsVenue: t - 40, now: t + 120 }) === '120ms \u00b7 venue\u2192us 40ms',
+     fmtAge({ tsRecv: t, tsVenue: t - 40, now: t + 120 }));
+  ok('a feed without a venue clock says so instead of reporting zero latency',
+     fmtAge({ tsRecv: t, tsVenue: null, now: t + 2500 }) === '2.5s \u00b7 no venue clock',
+     fmtAge({ tsRecv: t, tsVenue: null, now: t + 2500 }));
+  ok('clock skew is shown, not clamped away',
+     fmtAge({ tsRecv: t, tsVenue: t + 30, now: t }) === '0ms \u00b7 venue\u2192us -30ms',
+     fmtAge({ tsRecv: t, tsVenue: t + 30, now: t }));
+  ok('no book means no age', fmtAge({ tsRecv: null, tsVenue: null, now: t }) === 'n/a');
 }
 
 console.log(`\n${pass} passed, ${fail} failed`);

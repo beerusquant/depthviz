@@ -1,4 +1,4 @@
-import { fmtUsd, fmtPct, fmtPrice, panelRows } from './metrics.js';
+import { fmtUsd, fmtPct, fmtPrice, panelRows } from '/shared/metrics.js';
 
 const THEMES = {
   dark: {
@@ -288,7 +288,7 @@ function drawLegend(ctx, T, right, yy) {
 // The rows a trader cannot read off the curve itself. Everything dropped here
 // (the ±2%/±5% depths, total depth, the exchange line) is still in the COPY
 // payload — the panel is shortened, the data is not.
-const COMPACT_ROWS = new Set(['Symbol', 'Mid Price', 'Spread', 'Bid Depth', 'Ask Depth', 'OFI']);
+const COMPACT_ROWS = new Set(['Symbol', 'Mid Price', 'Spread', 'Bid Depth', 'Ask Depth', 'OFI', 'Book Age']);
 
 function drawPanel(ctx, T, px, py, m, meta, L) {
   const all = panelRows(m, meta);

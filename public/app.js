@@ -1,4 +1,4 @@
-import { computeMetrics, panelRows } from './metrics.js';
+import { computeMetrics, panelRows } from '/shared/metrics.js';
 import { draw } from './chart.js';
 
 const $ = (id) => document.getElementById(id);
@@ -45,6 +45,9 @@ function frame() {
         display: state.display || state.symbol || '—',
         quote: state.quote,
         vol24h: state.vol24h,
+        tsVenue: state.book?.tsVenue ?? null,
+        tsRecv: state.book?.tsRecv ?? null,
+        now: Date.now(),
       },
     });
     renderNote();
@@ -111,7 +114,7 @@ function connect() {
     if (m.op === 'status') setStatus(m.state, m.detail);
     else if (m.op === 'book') {
       if (m.exchange !== state.exchange || m.market !== state.market || m.symbol !== state.symbol) return;
-      state.book = { bids: m.bids, asks: m.asks, ts: m.ts, source: m.source, levels: m.levels, accum: m.accum };
+      state.book = { bids: m.bids, asks: m.asks, tsVenue: m.tsVenue, tsRecv: m.tsRecv, source: m.source, levels: m.levels, accum: m.accum };
       state.vol24h = m.vol24h;
       if (state.status !== 'live') setStatus('live');
       invalidate();
@@ -307,10 +310,17 @@ function snapshotPayload() {
     exchange: exName(), exchangeId: state.exchange, market: state.market,
     symbol: state.display, symbolRaw: state.symbol, range: state.range,
     transport: exOf(state.exchange)?.transport?.[state.market],
-    bookTs: state.book?.ts, levels: state.book?.levels, vol24h: state.vol24h,
+    tsVenue: state.book?.tsVenue ?? null,
+    tsRecv: state.book?.tsRecv ?? null,
+    ageMs: state.book?.tsRecv ? Date.now() - state.book.tsRecv : null,
+    venueLatencyMs: state.book?.tsVenue != null ? state.book.tsRecv - state.book.tsVenue : null,
+    levels: state.book?.levels, vol24h: state.vol24h,
   };
   return {
-    text: panelRows(m, { exchangeName: exName(), market: state.market, display: state.display, vol24h: state.vol24h })
+    text: panelRows(m, {
+      exchangeName: exName(), market: state.market, display: state.display, vol24h: state.vol24h,
+      tsVenue: state.book?.tsVenue ?? null, tsRecv: state.book?.tsRecv ?? null,
+    })
       .map(([l, v]) => `${(l + ':').padEnd(14)}${v}`).join('\n'),
     json: {
       ...meta,
@@ -415,6 +425,11 @@ const endDrag = (e) => { if (e.pointerId === dragId) { dragId = null; clearHover
 canvas.addEventListener('pointerup', endDrag);
 canvas.addEventListener('pointercancel', endDrag);
 canvas.addEventListener('pointerleave', (e) => { if (e.pointerType === 'mouse') clearHover(); });
+
+// The book age is the one number that changes while nothing arrives, so it is
+// also the one that would quietly freeze on a dead feed and keep reading "40ms"
+// forever. A one-second tick makes a stalled feed visible on the panel.
+setInterval(invalidate, 1000);
 
 // A phone rotation changes the layout the chart derives its geometry from, and
 // on iOS the resize event can land before the new size is readable.

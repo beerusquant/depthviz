@@ -93,7 +93,7 @@ export default {
           load(m.order_book);
           nonce = String(m.order_book.nonce);
           status('open');
-          publish(Date.now());
+          publish(null); // the snapshot frame carries no venue time
           return;
         }
         if (m.type !== 'update/order_book' || !m.order_book) return;
@@ -102,7 +102,7 @@ export default {
         load(m.order_book);
         nonce = String(m.order_book.nonce);
         // last_updated_at is microseconds since epoch.
-        publish(m.last_updated_at ? Math.round(m.last_updated_at / 1000) : Date.now());
+        publish(m.last_updated_at ? Math.round(m.last_updated_at / 1000) : null);
       },
       onStatus: (st, detail) => { if (st !== 'open') status(st, detail); },
     }, { pingMs: 20_000, pingPayload: JSON.stringify({ type: 'ping' }) });

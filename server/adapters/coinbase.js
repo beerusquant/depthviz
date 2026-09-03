@@ -54,10 +54,10 @@ export default {
           for (const r of m.bids) bids.set(r[0], r[1]);
           for (const r of m.asks) asks.set(r[0], r[1]);
           ready = true;
-          publish(Date.now());
+          publish(null); // the snapshot frame carries no venue time
         } else if (m.type === 'l2update' && ready) {
           for (const [side, px, sz] of m.changes) (side === 'buy' ? bids : asks).set(px, sz);
-          publish(m.time ? Date.parse(m.time) : Date.now());
+          publish(m.time ? Date.parse(m.time) : null);
         }
       },
       onStatus: status,

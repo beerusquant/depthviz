@@ -173,7 +173,7 @@ export default {
           emit({
             bids: merge(bids.toArray(), tailBids, (p, e) => p < e),
             asks: merge(asks.toArray(), tailAsks, (p, e) => p > e),
-            ts: +d.ts,
+            ts: Number.isFinite(+d.ts) ? +d.ts : null,
             source: 'ws',
             drift,
           });

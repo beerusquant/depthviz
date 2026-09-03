@@ -35,9 +35,14 @@ const futTickers = ttlCache(async () => {
 /**
  * MEXC spot v3 pushes protobuf frames. The schema is stable and small; these
  * are the only field numbers we need, mapped from the live wire format:
- *   1 = channel, 3 = symbol, 313 = PublicAggreDepths body
+ *   1 = channel, 3 = symbol, 6 = send time (epoch ms), 313 = PublicAggreDepths body
  *   313.1 = asks[], 313.2 = bids[]  (each: 1 = price str, 2 = qty str)
  *   313.4 = fromVersion, 313.5 = toVersion
+ *
+ * Field 6 was found the same way as the rest — walking live frames — and was
+ * being dropped, so this feed reported no venue clock at all while the venue
+ * was stamping every frame. It is MEXC's *send* time, not the moment the book
+ * changed, which is the honest thing to compare our receive time against.
  */
 const DEPTH_BODY_FIELD = 313;
 function decodeSpotDepth(buf) {
@@ -50,11 +55,13 @@ function decodeSpotDepth(buf) {
     return [+g.get(1)?.[0].toString('utf8'), +g.get(2)?.[0].toString('utf8')];
   });
   const str = (n) => f.get(n)?.[0]?.toString('utf8');
+  const sent = top.get(6)?.[0];
   return {
     asks: levels(f.get(1)),
     bids: levels(f.get(2)),
     from: +str(4),
     to: +str(5),
+    ts: typeof sent === 'bigint' ? Number(sent) : null,
   };
 }
 
@@ -101,6 +108,9 @@ const perpBook = (s, cs) => ({
       bids: (d.bids || []).map((r) => [+r[0], +r[1] * cs]),
       asks: (d.asks || []).map((r) => [+r[0], +r[1] * cs]),
       from: d.begin, to: d.end ?? d.version,
+      // `cts` is when the book changed, `ts` when the frame was sent; prefer
+      // the former. Both were being ignored, so this feed claimed no clock.
+      ts: d.cts ?? msg.ts ?? null,
     };
   },
   snapshot: async () => {
@@ -120,14 +130,14 @@ function pollBook(market, s, cs, emit, status) {
   return poller(async () => {
     if (market === 'spot') {
       const j = await fetchJson(`${SPOT}/api/v3/depth?symbol=${s}&limit=5000`);
-      emit({ bids: j.bids.map((r) => [+r[0], +r[1]]), asks: j.asks.map((r) => [+r[0], +r[1]]), ts: Date.now(), source: 'poll' });
+      emit({ bids: j.bids.map((r) => [+r[0], +r[1]]), asks: j.asks.map((r) => [+r[0], +r[1]]), ts: null, source: 'poll' });
     } else {
       const j = await fetchJson(`${FUT}/api/v1/contract/depth/${s}`);
       const d = j.data || {};
       emit({
         bids: (d.bids || []).map((r) => [+r[0], +r[1] * cs]),
         asks: (d.asks || []).map((r) => [+r[0], +r[1] * cs]),
-        ts: d.timestamp || Date.now(), source: 'poll',
+        ts: d.timestamp ?? null, source: 'poll',
       });
     }
   }, 1000, (e) => status('error', `MEXC poll: ${e.message}`));

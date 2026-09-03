@@ -35,7 +35,12 @@ emit({ bids, asks, ts, source, accum, drift })
 ```
 
 with sizes in **base units**, bids descending, asks ascending. `source` is
-`'ws'` or `'poll'` and drives the panel's transport label. The last two are
+`'ws'` or `'poll'` and drives the panel's transport label. `ts` is the **venue's
+own event time, or `null`** — never `Date.now()`: the hub stamps its own
+`tsRecv`, and a locally filled `ts` would report an upstream latency of zero on a
+feed that never measured one. If the venue's payload has a timestamp anywhere,
+find it; MEXC was stamping every frame on both markets and both decoders were
+dropping it. The last two are
 optional: `accum: { since }` marks a book that only reaches past its snapshot by
 accumulating diffs, so the UI can say the far depth is still converging
 ([tradeoff 7](architecture.md#tradeoffs-i-had-to-make)); `drift` is a 0..1

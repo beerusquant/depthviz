@@ -83,7 +83,8 @@ export function openDiffBook(cfg, emit, status) {
         applyEvt(e);
       }
       status('open');
-      publish(snap.ts || Date.now());
+      // A REST snapshot carries no event time on these venues: null, not now().
+      publish(snap.ts ?? null);
     } catch (err) {
       status('error', `${cfg.label} snapshot: ${err.message}`);
       if (!closed) setTimeout(() => { syncing = false; resync(); }, 1500);
@@ -111,7 +112,7 @@ export function openDiffBook(cfg, emit, status) {
         return;
       }
       applyEvt(e);
-      publish(e.ts || Date.now());
+      publish(e.ts ?? null);
     },
     onStatus: (st, detail) => { if (st !== 'open') status(st, detail); },
   }, { pingMs: cfg.pingMs, pingPayload: cfg.pingPayload });
