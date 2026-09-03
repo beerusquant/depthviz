@@ -105,7 +105,10 @@ body {
    top of the chart. Same text, muted, one line, clipped — it explains the book
    rather than interrupting it. */
 .note {
-  position: absolute; left: 92px; right: 24px; bottom: 22px;
+  /* Above the axis row, not across it: chart.js leaves 40px at the bottom of
+     the canvas for the tick values and the "% from mid" caption, and the note
+     used to be written straight over them. */
+  position: absolute; left: 92px; right: 24px; bottom: 46px;
   color: var(--dim); font-size: 10px; line-height: 1.35;
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
   pointer-events: none; opacity: .72;
@@ -118,3 +121,59 @@ body {
   padding: 7px 14px; opacity: 0; pointer-events: none; transition: .18s;
 }
 .toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
+
+/* ------------------------------------------------------------------ mobile
+
+   The bar is a single row of eight controls, which is fine at 1500px and
+   unusable at 390px. It wraps rather than scrolls horizontally: a control the
+   user cannot see is a control that does not exist, and a horizontally
+   scrolling toolbar hides the right-hand half of it behind a gesture nobody
+   tries. What goes away first is decoration — the sub-brand, the MARKET and
+   RANGE captions — never a control.
+
+   The canvas is sized by its own code (see chart.js): padding, legend and the
+   metrics panel all shrink with the viewport there, because a fixed 78px gutter
+   and a seven-item legend do not fit in 390 CSS pixels. */
+@media (max-width: 900px) {
+  .bar { flex-wrap: wrap; row-gap: 7px; }
+  .group.grow { min-width: 120px; }
+  .group.right { margin-left: auto; }
+  .brand-sub { display: none; }
+}
+
+@media (max-width: 620px) {
+  body { font-size: 11px; }
+  .bar { gap: 7px; padding: 7px 9px; }
+  .lbl { display: none; }
+  /* The symbol search is the control used most, so it gets its own full row,
+     directly under the market and exchange pickers it depends on. */
+  .group.grow { flex: 1 0 100%; order: 1; min-width: 0; }
+  .group.right { order: 3; }
+  .pairs { font-size: 9px; }
+  /* Touch targets: 30px tall minimum, which is what a thumb actually hits. */
+  .btn, .seg-b { padding: 7px 9px; }
+  .btn.icon { padding: 7px 8px; }
+  .sym-input { padding: 7px 9px; min-width: 0; }
+  .menu { max-height: 50vh; }
+  /* Above the axis, not on top of it: the tick row sits in the bottom 32px of
+     the canvas (chart.js `pad.b`), and the note used to be written across it. */
+  .note {
+    left: 56px; right: 10px; bottom: 40px; white-space: normal;
+    display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2;
+  }
+  #stage { min-height: 240px; }
+}
+
+@media (max-width: 420px) {
+  /* Below this the five range buttons and the four right-hand controls cannot
+     share a row. Ranges take their own, full width, evenly divided. */
+  .group.right .btn { padding: 6px 7px; }
+  #range-g { order: 2; flex: 1 0 100%; }
+  #range { flex: 1 1 auto; }
+  #range .seg-b { flex: 1 1 0; padding: 7px 2px; }
+  .brand { font-size: 12px; }
+}
+
+/* A finger has no hover state: the crosshair follows a drag on the canvas, so
+   the browser must not steal the gesture for a scroll. */
+#chart { touch-action: none; }

@@ -144,5 +144,98 @@ console.log('PNG export:', d ? d.suggestedFilename() : 'no download event');
 await p.click('#theme'); await p.waitForTimeout(500);
 await p.screenshot({ path: 'tools/out/s_light.png' });
 
+// ----------------------------------------------------------------- mobile
+// The desktop pass above runs at 1500x900, which is the one width the layout
+// was never going to get wrong. A phone is where a toolbar of eight controls
+// and a fifteen-row metrics panel stop fitting, and nothing here would have
+// said so: the page still loads, the socket still streams, and the controls
+// are simply somewhere off to the right where no one can reach them. So the
+// assertions are about reach, not about looks.
+{
+  const mob = await b.newContext({
+    viewport: { width: 390, height: 844 },
+    deviceScaleFactor: 3,
+    hasTouch: true,
+    isMobile: true,
+  });
+  const mp = await mob.newPage();
+  mp.on('pageerror', (e) => errs.push('MOBILE PAGEERROR: ' + e.message));
+  mp.on('console', (m) => { if (m.type() === 'error') errs.push('MOBILE CONSOLE: ' + m.text()); });
+  await mp.goto(`${BASE}/`, { waitUntil: 'networkidle' });
+  await mp.waitForTimeout(6000);
+
+  const CONTROLS = ['#market', '#ex-btn', '#sym-input', '#range', '#theme', '#copy', '#png'];
+  const geo = await mp.evaluate((sels) => {
+    const box = (sel) => {
+      const e = document.querySelector(sel);
+      if (!e) return null;
+      const r = e.getBoundingClientRect();
+      return {
+        w: Math.round(r.width), h: Math.round(r.height),
+        inView: r.width > 0 && r.left >= -1 && r.right <= innerWidth + 1 && r.top >= -1 && r.bottom <= innerHeight + 1,
+      };
+    };
+    return {
+      overflow: document.documentElement.scrollWidth - innerWidth,
+      controls: Object.fromEntries(sels.map((s) => [s, box(s)])),
+      probe: window.__depthvizProbe?.() ?? null,
+    };
+  }, CONTROLS);
+  console.log('mobile 390x844    ', JSON.stringify(geo));
+
+  if (geo.overflow > 0) errs.push(`RESPONSIVE: the page scrolls sideways by ${geo.overflow}px at 390px wide`);
+  for (const [sel, v] of Object.entries(geo.controls)) {
+    if (!v) errs.push(`RESPONSIVE: ${sel} is not in the page at 390px`);
+    else if (!v.inView) errs.push(`RESPONSIVE: ${sel} is off-screen at 390px (${v.w}x${v.h})`);
+    else if (v.h < 26) errs.push(`RESPONSIVE: ${sel} is ${v.h}px tall — below a usable touch target`);
+  }
+  // A chart squeezed under a wrapped toolbar is the failure mode this whole
+  // layout change exists to avoid, so it is asserted rather than eyeballed.
+  const ch = geo.probe?.chart;
+  if (!ch || ch.h < 300) errs.push(`RESPONSIVE: only ${ch ? ch.h : '?'}px of chart height left at 390px`);
+
+  // The crosshair readout was mouse-only, i.e. absent on every phone. A finger
+  // press-and-drag must set it, and lifting the finger must clear it.
+  const touch = await mp.evaluate(() => {
+    const c = document.getElementById('chart');
+    const r = c.getBoundingClientRect();
+    const ev = (type, x, y) => c.dispatchEvent(new PointerEvent(type, {
+      pointerId: 7, pointerType: 'touch', isPrimary: true, bubbles: true,
+      clientX: r.left + x, clientY: r.top + y,
+    }));
+    ev('pointerdown', r.width * 0.35, r.height * 0.6);
+    ev('pointermove', r.width * 0.55, r.height * 0.5);
+    const dragging = window.__depthvizProbe().hover;
+    ev('pointerup', r.width * 0.55, r.height * 0.5);
+    return { dragging, released: window.__depthvizProbe().hover };
+  });
+  console.log('  touch crosshair ', JSON.stringify(touch));
+  if (!touch.dragging) errs.push('TOUCH: dragging a finger across the chart set no crosshair');
+  if (touch.released) errs.push('TOUCH: the crosshair stayed behind after the finger was lifted');
+
+  // Rotated: the same assertions, on the layout tier above.
+  await mp.setViewportSize({ width: 844, height: 390 });
+  await mp.waitForTimeout(1200);
+  const land = await mp.evaluate((sels) => ({
+    overflow: document.documentElement.scrollWidth - innerWidth,
+    hidden: sels.filter((s) => {
+      const e = document.querySelector(s);
+      if (!e) return true;
+      const r = e.getBoundingClientRect();
+      return !(r.width > 0 && r.right <= innerWidth + 1 && r.bottom <= innerHeight + 1);
+    }),
+    chart: window.__depthvizProbe().chart,
+  }), CONTROLS);
+  console.log('mobile 844x390    ', JSON.stringify(land));
+  if (land.overflow > 0) errs.push(`RESPONSIVE: the page scrolls sideways by ${land.overflow}px at 844px wide`);
+  if (land.hidden.length) errs.push(`RESPONSIVE: unreachable after rotation: ${land.hidden.join(', ')}`);
+  if (land.chart.h < 200) errs.push(`RESPONSIVE: only ${land.chart.h}px of chart height left in landscape`);
+
+  await mp.setViewportSize({ width: 390, height: 844 });
+  await mp.waitForTimeout(1500);
+  await mp.screenshot({ path: 'tools/out/s_mobile.png' });
+  await mob.close();
+}
+
 console.log(errs.length ? 'ERRORS:\n' + errs.join('\n') : 'no js errors');
 await b.close();

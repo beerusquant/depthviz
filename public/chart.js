@@ -17,7 +17,47 @@ const THEMES = {
   },
 };
 
-const PAD = { l: 78, r: 22, t: 58, b: 40 };
+/**
+ * Chart geometry, derived from the canvas rather than fixed.
+ *
+ * The old constants (`l: 78, r: 22, t: 58, b: 40`) plus a seven-item legend and
+ * a fifteen-row metrics panel assume roughly 1 000 CSS pixels of width. On a
+ * 390px phone the same numbers leave ~290px of plot behind a panel that is
+ * wider than it, which is not a small chart — it is no chart. So each piece is
+ * dropped or shrunk in the order it stops earning its space: the legend first
+ * (its colours are also the panel's), then the panel down to the rows that
+ * cannot be inferred from the curve, then the gutters.
+ */
+function layout(cssW, cssH) {
+  const tiny = cssW < 480;
+  const narrow = cssW < 760;
+  const short = cssH < 420;
+  return {
+    tiny,
+    narrow,
+    legend: !narrow,
+    compactPanel: narrow,
+    xTicks: tiny ? 5 : narrow ? 7 : 9,
+    titleSize: tiny ? 11 : narrow ? 12 : 14,
+    pad: {
+      l: tiny ? 50 : narrow ? 62 : 78,
+      r: tiny ? 10 : narrow ? 14 : 22,
+      t: narrow ? (short ? 30 : 34) : 58,
+      b: tiny ? 32 : 40,
+    },
+  };
+}
+
+/** Cut a label to what fits, so a long title never overruns the plot. */
+function fit(ctx, text, maxW) {
+  if (ctx.measureText(text).width <= maxW) return text;
+  let lo = 0, hi = text.length;
+  while (lo < hi) {
+    const mid = (lo + hi + 1) >> 1;
+    if (ctx.measureText(`${text.slice(0, mid)}…`).width <= maxW) lo = mid; else hi = mid - 1;
+  }
+  return `${text.slice(0, lo)}…`;
+}
 
 /** Pick a human tick step (1/2/2.5/5 x 10^k) giving roughly `want` ticks. */
 function tickStep(max, want) {
@@ -55,22 +95,26 @@ export function draw(canvas, st) {
   ctx.fillStyle = T.bg;
   ctx.fillRect(0, 0, cssW, cssH);
 
+  const L = layout(cssW, cssH);
+  const PAD = L.pad;
   const W = cssW - PAD.l - PAD.r;
   const H = cssH - PAD.t - PAD.b;
   if (W < 120 || H < 100) return null;
 
   const { range, metrics: m, meta } = st;
   const title = m
-    ? `${meta.display} — ${meta.exchangeName} [${meta.market.toUpperCase()}] Order Book Depth`
+    ? L.narrow
+      ? `${meta.display} — ${meta.exchangeName} [${meta.market.toUpperCase()}]`
+      : `${meta.display} — ${meta.exchangeName} [${meta.market.toUpperCase()}] Order Book Depth`
     : `${meta.exchangeName} [${meta.market.toUpperCase()}] — waiting for book…`;
 
   ctx.textBaseline = 'middle';
-  ctx.font = '600 14px ui-monospace, Menlo, monospace';
+  ctx.font = `600 ${L.titleSize}px ui-monospace, Menlo, monospace`;
   ctx.fillStyle = T.text;
   ctx.textAlign = 'center';
-  ctx.fillText(title, PAD.l + W / 2, 22);
+  ctx.fillText(fit(ctx, title, W), PAD.l + W / 2, L.narrow ? 14 : 22);
 
-  drawLegend(ctx, T, PAD.l + W, 44);
+  if (L.legend) drawLegend(ctx, T, PAD.l + W, 44);
 
   if (!m) {
     ctx.textAlign = 'center';
@@ -92,8 +136,8 @@ export function draw(canvas, st) {
   const y0 = PAD.t + H;
 
   // --- grid + axes -------------------------------------------------------
-  const step = tickStep(yMax, 6);
-  ctx.font = '10px ui-monospace, Menlo, monospace';
+  const step = tickStep(yMax, L.tiny ? 4 : 6);
+  ctx.font = `${L.tiny ? 9 : 10}px ui-monospace, Menlo, monospace`;
   ctx.strokeStyle = T.grid;
   ctx.lineWidth = 1;
   ctx.textAlign = 'right';
@@ -101,29 +145,32 @@ export function draw(canvas, st) {
     const yy = Math.round(y(v)) + 0.5;
     ctx.beginPath(); ctx.moveTo(PAD.l, yy); ctx.lineTo(PAD.l + W, yy); ctx.stroke();
     ctx.fillStyle = T.axis;
-    ctx.fillText(v === 0 ? '0' : fmtUsd(v), PAD.l - 8, yy);
+    ctx.fillText(v === 0 ? '0' : fmtUsd(v), PAD.l - (L.tiny ? 5 : 8), yy);
   }
 
   ctx.textAlign = 'center';
-  const XT = 9;
+  const XT = L.xTicks;
   for (let i = 0; i < XT; i++) {
     const pct = -range + (2 * range * i) / (XT - 1);
     const xx = Math.round(x(pct)) + 0.5;
     ctx.strokeStyle = T.grid;
     ctx.beginPath(); ctx.moveTo(xx, PAD.t); ctx.lineTo(xx, y0); ctx.stroke();
     ctx.fillStyle = T.axis;
-    ctx.fillText(range >= 1 ? pct.toFixed(1) : pct.toFixed(2), xx, y0 + 16);
+    ctx.fillText(range >= 1 ? pct.toFixed(1) : pct.toFixed(2), xx, y0 + (L.tiny ? 13 : 16));
   }
   ctx.fillStyle = T.sub;
-  ctx.fillText('% from mid', PAD.l + W / 2, y0 + 31);
-
-  ctx.save();
-  ctx.translate(14, PAD.t + H / 2);
-  ctx.rotate(-Math.PI / 2);
-  ctx.textAlign = 'center';
-  ctx.fillStyle = T.sub;
-  ctx.fillText(`Depth (${meta.quote || 'USD'})`, 0, 0);
-  ctx.restore();
+  // Two labels, one gutter: on a phone the axis captions are the first thing to
+  // go, because the tick values already carry the units.
+  if (!L.tiny) {
+    ctx.fillText('% from mid', PAD.l + W / 2, y0 + 31);
+    ctx.save();
+    ctx.translate(14, PAD.t + H / 2);
+    ctx.rotate(-Math.PI / 2);
+    ctx.textAlign = 'center';
+    ctx.fillStyle = T.sub;
+    ctx.fillText(`Depth (${meta.quote || 'USD'})`, 0, 0);
+    ctx.restore();
+  }
 
   // --- raw level histogram (drawn under the curves) ----------------------
   const bw = W / 2 / m.nbins;
@@ -179,7 +226,7 @@ export function draw(canvas, st) {
   dashed(ctx, x(0), PAD.t, y0, T.mid, [7, 6]);
 
   // --- data panel --------------------------------------------------------
-  drawPanel(ctx, T, PAD.l + 12, PAD.t + 8, m, meta);
+  drawPanel(ctx, T, PAD.l + (L.tiny ? 6 : 12), PAD.t + 8, m, meta, L);
 
   // --- hover crosshair ---------------------------------------------------
   if (st.hover && st.hover.x >= PAD.l && st.hover.x <= PAD.l + W) {
@@ -238,16 +285,22 @@ function drawLegend(ctx, T, right, yy) {
   }
 }
 
-function drawPanel(ctx, T, px, py, m, meta) {
-  const rows = panelRows(m, meta);
-  ctx.font = '11px ui-monospace, Menlo, monospace';
-  const lh = 13.5;
+// The rows a trader cannot read off the curve itself. Everything dropped here
+// (the ±2%/±5% depths, total depth, the exchange line) is still in the COPY
+// payload — the panel is shortened, the data is not.
+const COMPACT_ROWS = new Set(['Symbol', 'Mid Price', 'Spread', 'Bid Depth', 'Ask Depth', 'OFI']);
+
+function drawPanel(ctx, T, px, py, m, meta, L) {
+  const all = panelRows(m, meta);
+  const rows = L.compactPanel ? all.filter(([l]) => COMPACT_ROWS.has(l)) : all;
+  ctx.font = `${L.tiny ? 9 : L.narrow ? 10 : 11}px ui-monospace, Menlo, monospace`;
+  const lh = L.tiny ? 11.5 : L.narrow ? 12.5 : 13.5;
   let labelW = 0, valW = 0;
   for (const [l, v] of rows) {
     labelW = Math.max(labelW, ctx.measureText(`${l}:`).width);
     valW = Math.max(valW, ctx.measureText(v).width);
   }
-  const w = labelW + valW + 30;
+  const w = labelW + valW + (L.tiny ? 22 : 30);
   const h = rows.length * lh + 16;
 
   ctx.fillStyle = T.panelBg;
@@ -263,6 +316,6 @@ function drawPanel(ctx, T, px, py, m, meta) {
     ctx.fillStyle = T.sub;
     ctx.fillText(`${l}:`, px + 10, yy);
     ctx.fillStyle = colors[c] || T.text;
-    ctx.fillText(v, px + 10 + labelW + 12, yy);
+    ctx.fillText(v, px + 10 + labelW + (L.tiny ? 8 : 12), yy);
   });
 }

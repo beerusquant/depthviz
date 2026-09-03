@@ -337,6 +337,21 @@ async function init() {
   requestAnimationFrame(frame);
 }
 
+/**
+ * A read-only probe for `smoke-ui.mjs`, not an API.
+ *
+ * The crosshair readout lives entirely inside the canvas, so from outside the
+ * page there is nothing to assert on: the book is streaming, every frame
+ * differs from the last, and a pixel diff cannot tell a crosshair from a tick.
+ * The touch path is exactly the one no developer exercises by accident, so it
+ * gets the one hook that makes it testable.
+ */
+window.__depthvizProbe = () => ({
+  hover: state.hover ? { ...state.hover } : null,
+  range: state.range,
+  chart: { w: canvas.clientWidth, h: canvas.clientHeight },
+});
+
 $('market').onclick = (e) => { const b = e.target.closest('.seg-b'); if (b) setMarket(b.dataset.market); };
 $('range').onclick = (e) => { const b = e.target.closest('.seg-b'); if (b) setRange(+b.dataset.range); };
 $('ex-btn').onclick = (e) => { e.stopPropagation(); const m = $('ex-menu'); const o = m.classList.contains('open'); closeAll(); if (!o) { renderExchangeMenu(); m.classList.add('open'); } };
@@ -373,12 +388,37 @@ $('png').onclick = () => {
   toast('PNG exported');
 };
 
-canvas.addEventListener('mousemove', (e) => {
+// The crosshair readout was mouse-only, which meant the chart carried no
+// numbers at all on a phone: `mousemove` never fires for a finger, and the
+// synthetic one a tap emits arrives after the tap, at the wrong place. Pointer
+// events cover both devices — a mouse tracks as it moves, a finger drags the
+// crosshair and drops it on release. The touch is captured so the readout keeps
+// following even when the finger wanders off the canvas mid-drag.
+const trackHover = (e) => {
   const r = canvas.getBoundingClientRect();
   state.hover = { x: e.clientX - r.left, y: e.clientY - r.top };
   invalidate();
+};
+const clearHover = () => { if (state.hover) { state.hover = null; invalidate(); } };
+
+let dragId = null;
+canvas.addEventListener('pointerdown', (e) => {
+  if (e.pointerType === 'mouse') return;
+  dragId = e.pointerId;
+  try { canvas.setPointerCapture(e.pointerId); } catch {}
+  trackHover(e);
 });
-canvas.addEventListener('mouseleave', () => { state.hover = null; invalidate(); });
+canvas.addEventListener('pointermove', (e) => {
+  if (e.pointerType === 'mouse' || e.pointerId === dragId) trackHover(e);
+});
+const endDrag = (e) => { if (e.pointerId === dragId) { dragId = null; clearHover(); } };
+canvas.addEventListener('pointerup', endDrag);
+canvas.addEventListener('pointercancel', endDrag);
+canvas.addEventListener('pointerleave', (e) => { if (e.pointerType === 'mouse') clearHover(); });
+
+// A phone rotation changes the layout the chart derives its geometry from, and
+// on iOS the resize event can land before the new size is readable.
 window.addEventListener('resize', invalidate);
+window.addEventListener('orientationchange', () => setTimeout(invalidate, 120));
 
 init();

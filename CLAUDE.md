@@ -1,148 +1,174 @@
 # CLAUDE.md — depthviz
 
-> Règles propres à ce repo. Elles précisent le CLAUDE.md global, elles ne l'annulent pas.
-> Chaque règle ci-dessous est née d'une erreur réelle ou d'une mesure faite dans ce repo :
-> si tu en ajoutes une, ajoute la preuve avec.
+> Rules specific to this repo. They refine the global CLAUDE.md, they do not
+> override it.
+> Every rule below was born from a real mistake or a measurement made in this
+> repo: if you add one, add the evidence with it.
 
 ---
 
-## 1. La donnée avant l'affichage
+## 1. The data comes before the display
 
-Cet outil n'a qu'un seul produit : un carnet d'ordres juste. Un graphe qui rend bien
-avec les mauvais chiffres est un bug plus grave qu'un graphe cassé, parce qu'il ne se
-signale pas.
+This tool has exactly one product: a correct order book. A chart that renders
+beautifully with the wrong numbers is a worse bug than a broken chart, because
+it does not announce itself.
 
-- **Une taille de carnet est en unités de base, toujours.** Trois venues ne cotent pas
-  ainsi : OKX SWAP (`ctVal * ctMult`, et `/ prix` sur les inverses), MEXC perp
-  (`contractSize`), Hyperliquid spot (contextes keyés par `ctx.coin`, **jamais** par
-  index — l'alignement positionnel donne −99,9 % d'erreur). Une conversion oubliée est
-  une erreur ×100 invisible : le graphe reste beau, seuls les zéros changent.
-  Aster et Lighter cotent en unités de base (`contractSize` ccxt = 1, `multiplier`
-  = 1,0 sur les 242 marchés Lighter) — vérifié, pas supposé. Lighter s'adresse par
-  `market_id` numérique et non par symbole : la résolution passe par sa propre
-  liste de marchés, jamais par un index.
-- **Jamais de chiffre sans protocole.** Une profondeur s'énonce avec sa venue, sa bande
-  (±x %) et l'instant. « $70M de profondeur » ne veut rien dire.
-- **Toute profondeur au-delà de ±0,6 % sur Binance, MEXC et Aster est une borne
-  inférieure**, pas un fait. Ces carnets ne dépassent leur snapshot qu'en accumulant des diffs : les
-  niveaux lointains présents avant la connexion et jamais retouchés nous sont invisibles
-  à jamais. Le chiffre ne peut que monter. L'UI le dit, le code ne doit pas l'oublier.
+- **A book size is in base units, always.** Three venues do not quote that way:
+  OKX SWAP (`ctVal * ctMult`, and `/ price` on inverses), MEXC perp
+  (`contractSize`), Hyperliquid spot (contexts keyed by `ctx.coin`, **never** by
+  index — positional alignment gives −99.9% error). A forgotten conversion is an
+  invisible 100x error: the chart stays beautiful, only the zeros change.
+  Aster and Lighter quote in base units (ccxt `contractSize` = 1, `multiplier`
+  = 1.0 across all 242 Lighter markets) — verified, not assumed. Lighter is
+  addressed by numeric `market_id` rather than by symbol: resolution goes
+  through its own market list, never through an index.
+- **No number without a protocol.** A depth figure is stated with its venue, its
+  band (±x%) and the instant. "$70M of depth" means nothing.
+- **Any depth beyond ±0.6% on Binance, MEXC and Aster is a lower bound**, not a
+  fact. Those books only grow past their snapshot by accumulating diffs: levels
+  that were there before we connected and were never touched again are invisible
+  to us forever. The figure can only go up. The UI says so; the code must not
+  forget it.
 
-## 2. ccxt est un juge, jamais une source
+## 2. ccxt is a judge, never a source
 
-`fetchOrderBook` renvoie les tailles OKX et MEXC en **contrats bruts** : ccxt expose
-`market.contractSize` et ne l'applique pas. Lire un carnet directement depuis ccxt est
-une erreur ×100 sur `BTC-USDT-SWAP` et ~×780 sur l'inverse `BTC-USD-SWAP`. Mesuré, pas
-supposé.
+`fetchOrderBook` returns OKX and MEXC sizes in **raw contracts**: ccxt exposes
+`market.contractSize` and does not apply it. Reading a book straight from ccxt is
+a 100x error on `BTC-USDT-SWAP` and ~780x on the inverse `BTC-USD-SWAP`.
+Measured, not assumed.
 
-Il reste précieux comme **seconde implémentation indépendante** contre laquelle nos
-adapters faits main peuvent avoir tort : `npm run crosscheck`. Sur les venues en
-contrats, le ratio **attendu est le multiplicateur, pas 1**.
+It remains valuable as a **second independent implementation** our hand-written
+adapters can be wrong against: `npm run crosscheck`. On contract-denominated
+venues the **expected ratio is the multiplier, not 1**.
 
-ccxt porte `aster` et `lighter` : les deux DEX perp ont donc un juge externe, et
-leur ratio attendu est 1 (aucun contrat). Bitunix reste la seule venue sans juge.
+ccxt carries `aster` and `lighter`: both perp DEXs therefore have an external
+judge, and their expected ratio is 1 (no contracts). Bitunix is the only venue
+with no judge.
 
-## 3. Un check qui crie au loup est pire que pas de check
+## 3. A check that cries wolf is worse than no check
 
-- **Ni un `SKIP` ni un `INCONC` ne comptent comme un succès.** Les deux sont une absence
-  de preuve et font sortir en code non nul. Un jour où tout est skip, le résumé ne doit
-  pas dire « tout va bien » — il l'a dit une fois, c'était faux.
-- **Un échantillon unique n'est pas un verdict.** Sur un carnet fin, une lecture peut
-  être à 2× de la suivante sans que rien ne soit cassé. MEXC spot est sorti `FAIL 0.648`
-  à n=3 alors que deux séries de n=20 le donnent à médiane 1.000. On juge sur la
-  **médiane**, et les instruments fins prennent plus d'échantillons.
-- **On compare sur la bande que les deux sources atteignent.** Nous facturer la
-  profondeur que ccxt n'a jamais récupérée transforme notre avantage en faux bug.
+- **Neither a `SKIP` nor an `INCONC` counts as a pass.** Both are an absence of
+  proof and exit non-zero. On a day when everything skips, the summary must not
+  say "all good" — it said that once, and it was false.
+- **One sample is not a verdict.** On a thin book a reading can be 2x the next
+  one with nothing broken. MEXC spot came out `FAIL 0.648` at n=3 while two runs
+  of n=20 put it at median 1.000. We judge on the **median**, and thin
+  instruments take more samples.
+- **We compare on the band both sources reach.** Charging us for depth ccxt
+  never fetched turns our advantage into a false bug.
 
-## 3 bis. Un carnet assemblé se prouve couche par couche
+## 3 bis. An assembled book is proven layer by layer
 
-Hyperliquid est le seul carnet **assemblé** et non lu : aucun endpoint du venue ne
-révélera qu'il est faux. La première couture n'utilisait que `{}`, `{3}`, `{2}` et
-**jetait tout bucket grossier ne dépassant pas la couche fine d'une largeur entière**.
-Résultat mesuré : à ±0,13 % du mid sur BTC, le graphe montrait **0,152 de la
-profondeur réelle**. Un trou, pas un arrondi.
+Hyperliquid is the only **assembled** book rather than a read one: no endpoint of
+the venue will ever reveal that it is wrong. The first stitch used only `{}`,
+`{3}` and `{2}` and **discarded any coarse bucket that did not clear the fine
+layer by a full bucket width**. Measured result: at ±0.13% of mid on BTC, the
+chart showed **0.152 of the real depth**. A hole, not a rounding error.
 
-- **Chaque couche est une mesure complète jusqu'à son propre bord** : on réconcilie
-  sur la **quantité cumulée**, jamais en coupant sur des frontières de prix. Le
-  premier bucket grossier qui dépasse le bord fin vaut `cumul_grossier − cumul_fin`.
-- **On compare sur la grille de prix de la couche jugée**, pas sur un ±x % arbitraire :
-  couper à ±10 % pénalisait la couture pour avoir mieux résolu la bande — mon premier
-  critère a crié au loup (1.0492) alors que le code était exact.
-- `npm run verify:hyperliquid` et `tools/test-stitch.mjs` gardent les deux propriétés.
+- **Each layer is a complete measurement out to its own edge**: layers are
+  reconciled on **cumulative quantity**, never cut on price boundaries. The first
+  coarse bucket that reaches past the fine edge is worth
+  `cumulative_coarse − cumulative_fine`.
+- **We compare on the price grid of the layer being judged**, not on an
+  arbitrary ±x%: cutting at ±10% penalised the stitch for having resolved the
+  band better — my first criterion cried wolf (1.0492) while the code was exact.
+- `npm run verify:hyperliquid` and `tools/test-stitch.mjs` guard both
+  properties.
 
-## 3 ter. Un avertissement permanent n'est plus un avertissement
+## 3 ter. A permanent warning is no longer a warning
 
-La note sous le graphe ne s'affiche **que si le carnet n'atteint pas la plage
-demandée** — elle dit alors où il s'arrête vraiment (`book ends at ±0.068% of ±2%`)
-et pourquoi. Avant, la note de venue était affichée à chaque rendu : un encadré
-ambre en permanence sur Hyperliquid, Bitunix et Aster. Un avertissement toujours
-là devient du papier peint, et cesse d'être lu au moment précis où il compte.
-`smoke-ui.mjs` teste les deux sens : Bitunix spot à ±2 % doit crier, Coinbase à
-±2 % doit se taire. Le graphe, lui, ne dessine jamais rien au-delà de la donnée.
+The note under the chart appears **only when the book does not reach the
+requested range** — it then says where it actually stops (`book ends at ±0.068%
+of ±2%`) and why. Before, the venue note was shown on every render: a permanent
+amber box on Hyperliquid, Bitunix and Aster. A warning that is always there
+becomes wallpaper, and stops being read at the exact moment it matters.
+`smoke-ui.mjs` tests both directions: Bitunix spot at ±2% must shout, Coinbase at
+±2% must stay silent. The chart itself never draws anything beyond the data.
 
-## 4. Ne pas croire un outil sur parole
+## 4. Do not take a tool at its word
 
-`smoke-feeds.mjs` a annoncé **les 11 feeds morts** en prod alors que le service était
-sain : il visait un port codé en dur. Deux conséquences durables :
+`smoke-feeds.mjs` reported **all 11 feeds dead** in production while the service
+was healthy: it targeted a hardcoded port. Two lasting consequences:
 
-- **Aucun outil ne code un port en dur.** Les trois qui passent par le websocket lisent
-  `DEPTHVIZ_URL` (défaut `ws://127.0.0.1:8787/ws`), `smoke-ui.mjs` lit `DEPTHVIZ_HTTP`
-  (défaut `http://127.0.0.1:8787`). Contre la prod : port 8888.
-- **Une erreur de connexion doit nommer l'URL réellement tentée.** Sans ça, un échec de
-  configuration se lit comme une panne applicative.
+- **No tool hardcodes a port.** The three that go through the websocket read
+  `DEPTHVIZ_URL` (default `ws://127.0.0.1:8787/ws`); `smoke-ui.mjs` and
+  `shoot.mjs` read `DEPTHVIZ_HTTP` (default `http://127.0.0.1:8787`). Against
+  production: port 8888.
+- **A connection error must name the URL it actually tried.** Without that, a
+  configuration mistake reads as an application outage.
 
-Corollaire : quand un check échoue, chercher d'abord si c'est le check qui a tort. Ici
-`verify-bitunix` et les carnets live passaient au même instant — l'incohérence était le
-signal.
+Corollary: when a check fails, first ask whether the check is the thing that is
+wrong. Here `verify-bitunix` and the live books were passing at the same instant —
+the inconsistency was the signal.
 
-## 5. Réduire la charge utile ne doit jamais réduire la portée
+## 5. Reducing the payload must never reduce the reach
 
-`hub.trim` gardait les 2 500 niveaux **les plus proches du mid**, ce qui coupait la queue
-et non le poids : Binance spot expédiait ±0,62 % d'un carnet qui atteignait ±11 %, soit
-**64 % de la profondeur dans ±10 % jetée** (Coinbase 38 %, Bitunix perp 19 %).
+`hub.trim` kept the 2 500 levels **nearest to mid**, which cut the tail rather
+than the weight: Binance spot shipped ±0.62% of a book that reached ±11%, i.e.
+**64% of the depth inside ±10% thrown away** (Coinbase 38%, Bitunix perp 19%).
 
-La forme correcte est un bucket `[prixVWAP, quantitéSommée]` : elle conserve
-**exactement** le notional cumulé, la quantité cumulée et le VWAP, puisque
-`vwapPrice * summedQty === Σ(price * qty)` par construction. Toute réduction future doit
-préserver cette identité, sinon elle ment.
+The correct form is a `[vwapPrice, summedQty]` bucket: it preserves cumulative
+notional, cumulative quantity and VWAP **exactly**, since
+`vwapPrice * summedQty === Σ(price * qty)` by construction. Any future reduction
+must preserve that identity, otherwise it lies.
 
-## 6. Un resync ne doit pas effacer ce qu'il ne peut pas voir
+## 6. A resync must not erase what it cannot see
 
-Un snapshot est autoritaire **dans sa propre plage de prix**, pas au-delà. Vider le
-carnet à chaque resync détruisait une portée accumulée en plusieurs minutes, et un seul
-gap de séquence ramenait le graphe à ±1,1 % en silence.
+A snapshot is authoritative **within its own price range**, not beyond it.
+Clearing the book on every resync destroyed reach accumulated over several
+minutes, and a single sequence gap silently took the chart back to ±1.1%.
 
-Garder la queue impose deux garde-fous, non négociables : un niveau conservé doit avoir
-été vu depuis moins de 5 min, et toute la queue est jetée si la coupure a dépassé 30 s.
-Sans eux, un ordre annulé pendant la coupure devient de la profondeur fantôme —
-sur-déclarer est pire que sous-déclarer. Couvert par `npm test`, sans réseau.
+Keeping the tail imposes two guardrails, non-negotiable: a kept level must have
+been seen less than 5 minutes ago, and the whole tail is dropped if the outage
+exceeded 30 s. Without them, an order cancelled during the outage becomes phantom
+depth — overstating is worse than understating. Covered by `npm test`, no
+network.
 
-## 7. Exposition et déploiement
+## 7. Exposure and deployment
 
-- **L'app n'a aucune authentification, et chaque visiteur fait ouvrir au host des
-  connexions vers huit exchanges depuis son IP.** Sur une machine qui fait tourner
-  autre chose, c'est le budget de rate limit de quelqu'un d'autre qu'un inconnu
-  dépense en enchaînant les symboles — et une IP whitelistée chez un exchange vaut
-  cher. `HOST` vaut donc `127.0.0.1` par défaut et l'exposition est un choix explicite.
-- **Déploiement par patch, jamais par rsync ni écrasement.** Le dossier déployé n'est
-  pas un checkout git. Un patch qui ne s'applique pas t'apprend que la cible a
-  dérivé — un écrasement détruit cette information.
-- **Après déploiement, comparer les hashes fichier par fichier.** Un service qui démarre
-  ne prouve pas que le bon code tourne.
-- **Chercher sur toute la flotte avant de dire « pas déployé ».** J'ai conclu deux fois
-  que depthviz était absent en cherchant un chemin supposé et le port de dev : les deux
-  étaient faux. Balayer par `find -iname` et `systemctl list-unit-files`.
+- **The app has no authentication, and every visitor makes the host open
+  connections to eight exchanges from its IP.** On a machine that runs something
+  else, that is someone else's rate-limit budget being spent by a stranger
+  cycling through symbols — and an IP whitelisted at an exchange is expensive.
+  So `HOST` defaults to `127.0.0.1` and exposure is an explicit choice.
+- **Deploy by patch, never by rsync or overwrite.** The deployed directory is not
+  a git checkout. A patch that fails to apply tells you the target has drifted —
+  an overwrite destroys that information.
+- **After deploying, compare hashes file by file.** A service that starts is not
+  proof that the right code is running.
+- **Search the whole fleet before saying "not deployed".** I concluded twice that
+  depthviz was absent, by looking for an assumed path and the dev port: both were
+  wrong. Sweep with `find -iname` and `systemctl list-unit-files`.
 
-## 8. Preuves attendues
+## 8. Expected evidence
 
-Un changement non exécuté n'existe pas. Selon ce qui est touché :
+A change that was not executed does not exist. Depending on what you touch:
 
-| Ce que tu touches | Ce que tu montres |
+| What you touch | What you show |
 |---|---|
-| `BookSide`, `hub.trim`, un resync | `npm test` (déterministe, sans réseau) |
-| un adapter, une conversion d'unité | `npm run crosscheck` **et** `node tools/verify-conversions.mjs` |
-| Bitunix (absent de ccxt) | `npm run verify:bitunix` |
-| l'UI, le transport | `node tools/smoke-feeds.mjs`, et `smoke-ui.mjs` si le rendu bouge |
+| `BookSide`, `hub.trim`, a resync | `npm test` (deterministic, no network) |
+| an adapter, a unit conversion | `npm run crosscheck` **and** `node tools/verify-conversions.mjs` |
+| Bitunix (absent from ccxt) | `npm run verify:bitunix` |
+| the UI, the layout, the transport | `node tools/smoke-feeds.mjs`, and `smoke-ui.mjs` if the rendering moves |
 
-Si tu ne peux pas prouver, dis-le explicitement. « Ça devrait marcher » n'est pas un
-résultat.
+`smoke-ui.mjs` ends with a mobile pass (390x844 and rotated) that asserts reach,
+not looks: no sideways scroll, every control on screen and tall enough for a
+thumb, chart height left over, and the touch crosshair setting and clearing. The
+crosshair was mouse-only for months — the page loaded, the socket streamed, and
+nothing said the chart carried no numbers at all on a phone.
+
+If you cannot prove it, say so explicitly. "It should work" is not a result.
+
+## 9. Documentation lives in `docs/`
+
+`README.md` is the front door: what it is, a live screenshot, the coverage table,
+and links. The long-form material — the tradeoffs, the unit conversions, the
+verification story, the deployment procedure, the adapter contract — is in
+[`docs/`](docs/). A 540-line README is one nobody finishes.
+
+Screenshots are real captures of a live book, produced by `node tools/shoot.mjs`
+against a running server, never mockups. It waits 66 s before shooting so the
+accumulating-tail note has expired: a transient caveat frozen into a README reads
+as a permanent one.
+
+The repo is English-only — code, comments, docs and these rules.
