@@ -178,7 +178,11 @@ export default {
     // If the websocket has not produced a book in 8s, poll until it recovers.
     const wd = watchdogFallback(8000, () => pollBook(market, s, cs, emit, status));
     const wrapped = (book) => { wd.ok(); emit(book); };
-    const conn = openDiffBook(market === 'spot' ? spotBook(s) : perpBook(s, cs), wrapped, status);
+    const cfg = market === 'spot' ? spotBook(s) : perpBook(s, cs);
+    // The transport seam the tests drive. Production never sets it: the hub
+    // only ever builds `opts` as { range }.
+    if (opts?.connect) cfg.connect = opts.connect;
+    const conn = openDiffBook(cfg, wrapped, status);
     return { close() { wd.close(); conn.close(); } };
   },
 };

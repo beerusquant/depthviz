@@ -93,6 +93,9 @@ export default {
     let drift = null;
     let stopped = false;
     let lastBook = null;
+    // Held so close() can clear it: a flag alone stops the NEXT measurement and
+    // leaves the pending one holding the event loop for five seconds.
+    let measureTimer = null;
 
     const cumTo = (rows, mid, sign, band) => {
       let q = 0;
@@ -121,12 +124,15 @@ export default {
           drift = rest > 0 ? Math.abs(ws - rest) / rest : null;
         }
       } catch { /* the ws book is unaffected by a failed REST read */ }
-      if (!stopped) setTimeout(measure, 5000);
+      if (!stopped) measureTimer = setTimeout(measure, 5000);
     };
     // The raw arrays are handed to the coalescer untouched: on BTC this book
     // carries 25 000 levels and mapping them is the expensive half, so it must
     // happen on the frame that is actually shipped, not on every frame received.
     const publish = coalesce((b, a, ts) => {
+      // A socket closes with a handshake, so a frame already in flight still
+      // reaches onMessage after close(): a closed adapter must publish nothing.
+      if (stopped) return;
       const bids = b.map((r) => [+r[0], +r[1]]);
       const asks = a.map((r) => [+r[0], +r[1]]);
       if (bids.length && asks.length) lastBook = { bids, asks };
@@ -145,7 +151,7 @@ export default {
       },
       onStatus: status,
     }, { pingMs: 20_000, pingPayload: JSON.stringify({ op: 'ping', ping: Math.floor(Date.now() / 1000) }) });
-    setTimeout(measure, 5000);
-    return { close() { stopped = true; publish.cancel(); conn.close(); } };
+    measureTimer = setTimeout(measure, 5000);
+    return { close() { stopped = true; clearTimeout(measureTimer); publish.cancel(); conn.close(); } };
   },
 };

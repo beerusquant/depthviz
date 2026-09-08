@@ -62,6 +62,9 @@ export default {
       for (const r of ob.asks || []) asks.set(r.price, r.size, now);
     };
     const publish = coalesce((ts) => {
+      // A socket closes with a handshake, so a frame already in flight still
+      // reaches onMessage after close(): a closed adapter must publish nothing.
+      if (closed) return;
       const b = bids.toArray(), a = asks.toArray();
       if (b.length && a.length) emit({ bids: b, asks: a, ts, source: 'ws' });
     }, PUBLISH_MS);

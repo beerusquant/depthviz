@@ -173,11 +173,78 @@ Adapters expose one seam for this and no other: `opts.connect`, a transport
 factory the tests pass in. The hub only ever builds `opts` as `{ range }`, so
 nothing in production reaches it. Do not use it to inject venue behaviour.
 
+## 2 quater. A measurement nobody can repeat is a guess with a story
+
+Every threshold above came from a distribution sampled once, by a script that no
+longer exists. That is not a measurement — it is a number with a good anecdote
+attached: the venue changes its cadence, the distribution moves underneath, and
+the constant keeps looking measured.
+
+- **A threshold that is checkable must be checked.** `tools/measure-drift.mjs`
+  re-derives the two that are, reading `DRIFT_TOLERANCE` and `DRIFT_P95_FACTOR`
+  **from the adapter** rather than copying them: a threshold quoted in one file
+  and used in another is a threshold nobody is checking.
+- **A quantile needs enough sample to be that quantile, and a short run
+  produces the exact shape of a real regression.** Measured 2026-09-08 on the
+  same instruments at the same cadence, an hour apart: **3 min, n=177 → OKX spot
+  p95 0.163%** (FAIL against the 3% tolerance) and **15 min, n=895 → p95
+  0.023%** (PASS, 130x margin). A p95 over 177 points is the ninth-largest
+  value, so two spikes set it; over 895 it is the forty-fifth and they do not.
+  Nothing about the venue had changed. The gate now refuses under 500 readings —
+  INCONC, which exits non-zero — and the hourly run records the distribution
+  while arming nothing. Relaxing a factor until a check goes green is buying
+  silence; so is widening a tolerance. Say "not proven", then go and take a
+  longer sample.
+- **A book that was not recorded cannot be measured twice.** `tools/record.mjs`
+  writes the venue's **raw** book to JSONL and `tools/replay.mjs` reads it back
+  through the same `shared/metrics.js` the panel uses. Record the raw book, never
+  the shipped one: the reduction is exact in cumulative notional and wrong about
+  the price a size walks to, which is the question most worth asking of an
+  archive.
+- **`.part` until an end marker says otherwise, and gaps before figures.** A
+  partial JSONL is byte-for-byte plausible, and a distribution computed across a
+  four-minute hole mixes two regimes while looking perfectly clean.
+
+## 2 quinquies. A lifecycle bug is fixed on one venue and lives on in seven
+
+Every one of them was found in production on a single adapter: Hyperliquid's
+dead layer serving frozen depth, MEXC's invented clock, Binance perp pinned to
+its snapshot. Each is now tested — on the adapter it happened to.
+
+`tools/test-conformance.mjs` asks the same questions of all thirteen feeds:
+nothing published before the venue has spoken (the fetch stub is **gated**, or
+five adapters answer themselves before the test can look), books sorted,
+positive, uncrossed and two-sided, the clock the venue's or `null` and never
+this process's, a connection reported down no longer contributing depth, and
+`close()` idempotent, closing every transport, publishing nothing afterwards and
+leaving no timer behind.
+
+Writing it found six real defects at once — the five diff-book venues could not
+be driven through their own `open()`, five adapters published during the closing
+handshake, and two left a poll timer holding the event loop after `close()`. Six
+deliberate breaks, all six caught. Add a venue to the table when you add an
+adapter; a contract that covers twelve of thirteen feeds is a contract about
+nothing.
+
+Corollary, learned the expensive way: **a fixture is recorded, never assembled.**
+A snapshot and a diff frame captured minutes apart and renumbered onto each other
+produce a book that CROSSES — which reads exactly like an adapter bug. Capture
+the pair the way the adapter takes it.
+
 ## 3. A check that cries wolf is worse than no check
 
 - **Neither a `SKIP` nor an `INCONC` counts as a pass.** Both are an absence of
   proof and exit non-zero. On a day when everything skips, the summary must not
   say "all good" — it said that once, and it was false.
+- **A check that never returns is worse than one that fails.** No verdict, no
+  log line, no exit code — just a unit sitting there until systemd kills it
+  silently. Measured on 2026-09-08: `crosscheck-ccxt` spawns a child per venue
+  with no bound of its own, one of them hung for **over an hour**, and the
+  twelve checks behind it never ran. Both spawners take a timeout now
+  (`DEPTHVIZ_CROSSCHECK_TIMEOUT_MS`, `DEPTHVIZ_CHECK_TIMEOUT_MS`) and a killed
+  child is reported as not judged, which already exits non-zero. Any tool that
+  spawns or waits gets a bound, and the bound has to *report* rather than only
+  stop.
 - **One sample is not a verdict.** On a thin book a reading can be 2x the next
   one with nothing broken. MEXC spot came out `FAIL 0.648` at n=3 while two runs
   of n=20 put it at median 1.000. We judge on the **median**, and thin
@@ -240,6 +307,22 @@ notional, cumulative quantity and VWAP **exactly**, since
 `vwapPrice * summedQty === Σ(price * qty)` by construction. Any future reduction
 must preserve that identity, otherwise it lies.
 
+What it does **not** preserve is the inverse function — the price a given size
+walks to *inside* a bucket, where the reduced curve is a straight line and the
+real book is a staircase. Measured on a book decaying at `exp(-0.6d)`: exact to
+1e-12 at ±2%, ±5% and ±10%, 0.082% off at a range that is not a report edge, a
+few basis points off on a walk. Invisible on a chart; the whole question for
+anyone sizing an order. So the hub keeps the venue's book as it arrived,
+`/api/depth?levels=raw` serves it, and figures computed from it say
+`metricsFrom: "raw"` rather than leaving a caller to work out which book they
+got.
+
+Corollary: **the reduction belongs on the way out, not on the way in.** It used
+to run on every book an adapter published, while the hub threw most of those
+away at its own throttle — the two run on independent phases — and a feed with
+no viewers was reduced for an audience of zero. It runs in `payload()` now,
+memoized on the book's sequence: once per book actually shipped.
+
 ## 6. A resync must not erase what it cannot see
 
 A snapshot is authoritative **within its own price range**, not beyond it.
@@ -259,6 +342,36 @@ network.
   else, that is someone else's rate-limit budget being spent by a stranger
   cycling through symbols — and an IP whitelisted at an exchange is expensive.
   So `HOST` defaults to `127.0.0.1` and exposure is an explicit choice.
+- **A global ceiling protects the host, not the other viewers.** 48 feeds was
+  one cap for everybody: one client cycling a symbol list took every slot, each
+  lingering 30 s after it let go, and everyone else was refused by a server
+  behaving exactly as designed. The accounting is per remote address now — 12
+  feeds, 24 sockets, a token bucket on the two routes that reach an exchange —
+  and joining a feed somebody already holds is free, because two viewers on
+  BTCUSDT are one upstream connection. It lives in `server/quota.js` and not in
+  the hub for a reason that is not cosmetic: constructing a Feed opens sockets,
+  so a rule written inside the hub can only be tested against the live internet.
+- **A refusal is a 429, never a 504.** This server saying no and the venue being
+  unwell are different answers and a caller has to be able to tell them apart.
+- **Sizing a limit that fires on legitimate use is how limits get raised in
+  anger.** The first bucket (10 burst, 1/s) throttled this repo's own
+  measurement tool. What actually bounds the cost to an exchange is the feed
+  quota — a feed is one connection however often it is asked for — so the bucket
+  only has to stop a tight loop. 20 burst, 5/s.
+- **Still open, measured 2026-09-08:** twelve feeds opened at once from one
+  client is enough for **Binance itself to answer 429** on the snapshot calls
+  (weight 50 each). The per-client cap bounds concurrency; nothing yet paces the
+  burst of REST snapshots that opening them produces. A global upstream limiter
+  is the fix and has not been written.
+
+- **A counter with no memory answers the wrong question.** `reconnects: 1284` is
+  a total since the feed opened; whether anything is wrong now is a delta, and
+  one reading cannot produce one. Each feed keeps a ten-second sample ring an
+  hour deep; `/api/feeds` reports the window behind the instant, `?history=1`
+  the samples, and `/metrics` the same rows for a scraper — because a feed that
+  quietly stops advancing is invisible to anyone who does not happen to look
+  twice at the right two moments. A feed with no venue clock emits **no** latency
+  series rather than a zero.
 - **Deploy by patch, never by rsync or overwrite.** The deployed directory is not
   a git checkout. A patch that fails to apply tells you the target has drifted —
   an overwrite destroys that information.
@@ -275,6 +388,11 @@ A change that was not executed does not exist. Depending on what you touch:
 | What you touch | What you show |
 |---|---|
 | `BookSide`, `hub.trim`, a resync, `diff-book` sequencing | `npm test` (deterministic, no network) |
+| an adapter's lifecycle — open, close, status handling, timers | `node tools/test-conformance.mjs`, and add the venue to its table |
+| `server/quota.js`, `tokenBucket`, a limit or a ceiling | `node tools/test-limits.mjs` **and** a live refusal: 14 concurrent symbols must yield 12 served and a 429 that says what to do |
+| `server/health.js`, `/api/feeds`, `/metrics` | `node tools/test-health.mjs` **and** a `curl` of both routes |
+| a threshold, or the sample behind one | `npm run measure:drift -- --check`, and the sample written next to the number |
+| the recording format | `node tools/test-recording.mjs` **and** one real capture replayed end to end |
 | an adapter, a unit conversion | `node tools/test-adapters.mjs` (deterministic, replays recorded frames), **then** `npm run crosscheck` **and** `node tools/verify-conversions.mjs` |
 | Bitunix (absent from ccxt) | `npm run verify:bitunix` |
 | `reconnectingWs`, a socket's lifecycle | `node tools/test-reconnect.mjs` — both halves: a dead path is dropped, a quiet-but-answering one is not |

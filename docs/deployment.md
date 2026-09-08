@@ -15,8 +15,28 @@ information. And after deploying, confirm the tree matches the commit by
 **comparing per-file hashes** — a service that starts is not proof that the code
 you meant to ship is the code running.
 
+### Watching it without watching it
+
+`/metrics` serves a Prometheus exposition of what `/api/feeds` reports, plus the
+process's own memory. The single most useful alert is on
+`depthviz_feed_book_age_ms`: `state` reads `live` between drops and a feed that
+quietly stops advancing is invisible in any single reading, which is the one
+failure this tool must never have. `depthviz_feed_reconnects_total` as a rate
+catches the feed that is flapping without ever looking broken, and
+`depthviz_process_rss_bytes` catches the other slow one — every feed holds the
+venue's book as it arrived, and the deepest are 43 000 levels a side.
+
+If nothing scrapes the host, the ring is still there: `/api/feeds` carries a
+`window` summary of the last hour per feed, and `?history=1` the ten-second
+samples behind it. It costs about 30 KB per feed and survives nothing — it is
+in-process memory, and a restart is a fresh hour.
+
 The service listens on loopback and the firewall carries no rule for its port,
-so it is not reachable from the internet. Reach it over an SSH tunnel:
+so it is not reachable from the internet. If you ever change that, the ceilings
+in `server/quota.js` are what stand between one stranger and this host's
+rate-limit budget at eight exchanges — and set `DEPTHVIZ_TRUST_PROXY=1` if
+anything sits in front, or every caller shares one budget and the limits
+throttle everybody at once or nobody. Reach it over an SSH tunnel:
 
 ```bash
 ssh -L 8888:127.0.0.1:8888 <your-host>     # then http://127.0.0.1:8888

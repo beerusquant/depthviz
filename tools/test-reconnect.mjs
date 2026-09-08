@@ -44,7 +44,13 @@ console.log('reconnectingWs — the idle watchdog');
     onStatus: (st, d) => states.push(`${st}${d ? `:${d}` : ''}`),
   }, { pingMs: PING_MS });
 
-  await wait(1400);
+  // The budget: the watchdog fires at 500 ms, and the reconnect that follows
+  // waits 500 ms of backoff plus up to 400 ms of jitter — so the second
+  // connection lands between 1005 and 1405 ms. Waiting 1400 ms put the
+  // assertion exactly on that upper edge and this test failed most runs, which
+  // is worse than not having it: a suite with one habitual red line teaches
+  // people to read past red lines.
+  await wait(2200);
   conn.close();
   wss.close();
 

@@ -266,6 +266,61 @@ reports `ageMs` — time since the last book — alongside reconnect, error and
 dropped-frame counters, and the panel shows the same age on screen, refreshed
 once a second so a stalled feed cannot freeze its own staleness.
 
+**And a counter with no memory answers the wrong question.** `reconnects: 1284`
+is a total since the feed opened; whether anything is wrong *now* is a delta,
+and a single reading cannot produce one. So each feed keeps a bounded ring —
+ten-second samples, an hour deep, about 30 KB — and `/api/feeds` reports the
+window behind the instant: how many reconnects in the last hour, the worst book
+age, how many samples went by with nothing arriving. `?history=1` returns the
+samples themselves. `/metrics` serves the same rows as a Prometheus exposition,
+because the failure this tool must never have — a feed that quietly stops
+advancing — is invisible to anyone who does not happen to look twice at the
+right two moments. Alert on `depthviz_feed_book_age_ms`. A feed with no venue
+clock emits **no** latency series rather than a zero: the exposition tells the
+same truth the panel does.
+
+**What one client may hold.** The 48-feed ceiling protects the host and does
+nothing for the other viewers: one caller cycling a symbol list takes every
+slot, each lingering 30 s after it lets go, and everybody else is refused by a
+server behaving exactly as designed. So the accounting is per remote address —
+12 feeds, 24 sockets, and a token bucket on the two routes that reach an
+exchange — and joining a feed somebody already holds is free, because two
+viewers on BTCUSDT are one upstream connection. It lives in `server/quota.js`
+rather than in the hub for a testing reason that is not cosmetic: constructing a
+Feed opens sockets to an exchange, so a rule written inside the hub can only be
+tested against the live internet. Kept out of it, `tools/test-limits.mjs` pins
+every case in milliseconds.
+
+Sizing the bucket taught something too. The first setting (10 burst, 1/s)
+throttled this repo's **own** measurement tool, which watches four instruments
+once a second — and a limit that fires on legitimate use is a limit that gets
+raised in anger instead of reasoned about. The thing that actually bounds what a
+client costs an exchange is the feed quota, since a feed is one connection
+however often it is asked for; the bucket only stops a tight loop from making
+this process redo that work. It is 20 burst, 5/s.
+
+## The reduction happens on the way out
+
+`trim` used to run in `onBook`, i.e. on every book the adapter published. The
+adapters coalesce their sorting at `PUBLISH_MS` and the hub throttles its
+fan-out at the same period — but on independent phases, so a book could be
+bucketed and then superseded before its turn to be sent, and one with no viewers
+at all was reduced for an audience of zero. The hub now keeps the venue's book
+as it arrived and reduces it in `payload()`, memoized on the book's sequence:
+once per book actually shipped, reused by anyone who joins before the next one.
+
+Keeping the raw book is what makes `/api/depth?levels=raw` possible, and that
+matters more than the saved milliseconds. The reduction preserves cumulative
+notional, cumulative quantity and VWAP **exactly** — `vwapPrice * summedQty ===
+Σ(price * qty)` by construction — and it does not preserve the inverse function:
+the price a given size walks to *inside* a bucket, where the reduced curve is a
+straight line and the real book is a staircase. On a book decaying at
+`exp(-0.6d)` that is 0.082% at a range which is not a report edge, and a few
+basis points on a walk. Invisible on a chart; the whole question for anyone
+sizing an order. The figures a raw request gets back are computed from the raw
+book and say so in `metricsFrom`, so the default answer still cannot drift from
+what the screen shows.
+
 ## One implementation of every number
 
 `shared/metrics.js` computes depth, VWAP, OFI and the truncation flags, and both

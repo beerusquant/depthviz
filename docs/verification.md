@@ -9,8 +9,8 @@ number announce itself.
 
 ## What the tests cover, and what they cannot
 
-`npm test` is four suites, 52 assertions, no network and no browser — they run
-in CI on Node 20 and 22 on every push:
+`npm test` is eleven suites, 400 assertions, no network and no browser — they
+run in CI on Node 20 and 22 on every push:
 
 | suite | what it pins |
 |---|---|
@@ -21,6 +21,10 @@ in CI on Node 20 and 22 on every push:
 | `test-reconnect` | the socket liveness watchdog: a path that proves nothing is dropped, and a quiet book whose venue still answers a ping is left alone |
 | `test-diff-book` | the sequencing engine five feeds share: the anchor after a snapshot, gap detection, resync — replayed from ids captured live on Binance perp |
 | `test-metrics` | every number in the panel — depth, VWAP, imbalance, the truncation flags |
+| `test-conformance` | one lifecycle contract, applied to **all thirteen feeds** (see below) |
+| `test-limits` | what one client may hold: the feed quota, the socket counter, the token bucket's burst, refill and ceiling |
+| `test-health` | the sample ring, the window deltas, and a Prometheus exposition that survives an exchange-chosen symbol |
+| `test-recording` | the tape's format: a raw round trip, a crashed capture that must not read as finished, and the gaps that would ruin a distribution |
 
 The last two were written after the fact, for the two functions that had no
 coverage at all despite producing everything on screen. Writing them was worth
@@ -28,6 +32,57 @@ it immediately: `computeMetrics` was dropping a level sitting **exactly** on a
 boundary, because `|95/100 - 1| * 100` is `5.000000000000004` in binary floating
 point, so the "-5% depth" figure excluded the very level that defines it. Round
 numbers are exactly where real books put size.
+
+### One contract, thirteen feeds
+
+`test-adapters` proves the **decoders** — a field is read, a multiplier applied,
+a side not swapped. It says nothing about the **lifecycle**, and every lifecycle
+bug this repo has had was found in production on one venue and then fixed on
+that venue alone: a Hyperliquid layer that dropped out kept its last snapshot in
+the stitch forever and served frozen depth as live; MEXC published `Date.now()`
+where the venue's clock belonged; Binance perp stayed pinned to its REST
+snapshot from the day it was written. Each of those is tested — on the adapter
+it happened to. The next one will land somewhere else.
+
+`test-conformance` asks the same questions of all eight adapters, driving each
+through a fake transport and a **gated** fetch stub, from recorded payloads:
+
+- nothing is published before the venue has said anything — the gate is what
+  makes this a real question, since five adapters fetch a snapshot at open and
+  would otherwise answer themselves before the test could look;
+- every book is sorted outward from mid, positive, uncrossed, two-sided, and
+  says which transport it came from;
+- the clock is the venue's or it is `null`, **never this process's** — checkable
+  without knowing each venue's field, because a recorded stamp always predates
+  the test run and `Date.now()` never does;
+- a connection reported down stops contributing depth: no book at all on a
+  single-socket venue, a book that reaches **less far** on Hyperliquid, which is
+  the honest answer and was the bug;
+- `close()` is idempotent, closes every transport it opened, publishes nothing
+  afterwards, and leaves no timer behind.
+
+Writing it found six real defects, none of which any existing test could see:
+the five diff-book venues could not be driven through their own `open()` at all
+(the transport seam was on the engine's config and no adapter forwarded it);
+five adapters published books during the closing handshake, when a socket has
+been asked to close but frames are still arriving; and OKX and Bitunix each left
+a pending poll timer holding the event loop after `close()` — a second and five
+seconds of shutdown per feed, for a response that would be discarded.
+
+**And a test suite is worth what it catches.** Six deliberate breaks, one at a
+time, all six caught: Hyperliquid publishing after close, Coinbase stamping
+`Date.now()` instead of the venue's clock, Bitunix leaving its poll timer, a
+dead Hyperliquid layer keeping its depth in the stitch, Lighter shipping an
+unsorted side, and OKX forgetting to close its socket.
+
+One thing the suite could not have without new fixtures: a snapshot and the diff
+frame that anchors to it. Recording the two separately and renumbering one onto
+the other produces a book that **crosses** — the captures are minutes apart, so
+applying later diffs to an earlier book puts a bid above an ask. That looks
+exactly like an adapter bug and is not one; it is a fixture that was assembled
+instead of recorded. `capture-fixtures.mjs` now takes the pair the way the
+adapter does — subscribe, buffer, fetch, keep the first frame that satisfies the
+venue's own anchoring rule — so what lands in the file is one coherent instant.
 
 What CI deliberately does not run: anything needing the network. A build that
 goes red because an exchange had a bad minute teaches people to ignore the
@@ -41,11 +96,111 @@ node tools/smoke-feeds.mjs         # subscribes to all 13 exchange/market combos
 node tools/smoke-ui.mjs            # drives the real page in Chrome: every venue, search, range, copy, PNG
 node tools/verify-conversions.mjs  # re-runs the unit-conversion cross-checks against live data
 npm run verify:hyperliquid         # the only assembled book: every stitched layer vs its own measurement
-npm test                           # 52 assertions over the four pure cores, no network
+npm test                           # 400 assertions, no network, eleven suites
 npm run crosscheck                 # tools/crosscheck-ccxt.mjs: ccxt as an independent second opinion (server must be up)
 npm run crosscheck -- mexc --repeat 20   # sample one venue repeatedly and report the ratio distribution
 npm run verify:bitunix             # the venue ccxt cannot judge, checked against itself and its peers
 npm run checks                     # every proof here in one run, for a timer; non-zero if any fails
+npm run measure:drift -- --check   # re-derive the distributions two thresholds rest on
+```
+
+### A check that cannot report is not a check
+
+Both spawners here ran without a timeout until a venue's ccxt child hung for
+over an hour and took the whole hourly run with it — no verdict, no log line,
+nothing in `logs/checks.log`, just a unit waiting for `TimeoutStartSec` to kill
+it without a word. `crosscheck-ccxt.mjs` now bounds each venue's child
+(`DEPTHVIZ_CROSSCHECK_TIMEOUT_MS`, five minutes; the worst legitimate case is 15
+samples eight seconds apart) and `run-checks.mjs` bounds each check
+(`DEPTHVIZ_CHECK_TIMEOUT_MS`, fifteen). A killed child is "not judged", which
+already exits non-zero — an absent measurement was never a passing one.
+
+## Re-deriving a threshold instead of believing it
+
+Every threshold here is supposed to come from a distribution somebody sampled,
+with the sample written next to it. Two of them are — OKX's 3% drift trigger and
+Bitunix's *refusal* of a threshold — and both were measured once, by a script
+that no longer exists. That is a guess with a good story: the venue changes its
+cadence, the distribution moves underneath, and the constant keeps looking
+measured.
+
+`tools/measure-drift.mjs` reads `drift` off `/api/depth` — the same figure the
+adapters compute and the panel shows, not a second implementation — builds the
+distribution, writes it to `logs/measurements/`, and with `--check` asserts the
+two claims the code actually rests on: that `DRIFT_TOLERANCE` is still at least
+`DRIFT_P95_FACTOR` (20) times the measured p95, and that Bitunix perp's median
+stays under the 2% CLAUDE.md claims for it. Both constants are **imported from
+the adapter**, not copied: a threshold quoted in one file and used in another is
+a threshold nobody is checking. Neither a SKIP nor an INCONC counts as a pass —
+under ten samples is not a distribution, and it exits non-zero saying so.
+
+It taught something on its first two runs, which is the point of writing it.
+The three-minute run failed:
+
+```
+       okx spot BTC-USDT          median 0.000%  p95 0.163%  max 6.173%  n=177
+       okx perp BTC-USDT-SWAP     median 0.000%  p95 0.182%  max 0.591%  n=177
+FAIL   okx spot BTC-USDT          tolerance 3.000% vs 20x p95 = 3.260%
+```
+
+against a source that records p95 ≤ 0.093%. Twice as wide: the venue had moved,
+or the threshold had rotted. Neither. Fifteen minutes on the same instruments at
+the same cadence, an hour later:
+
+```
+       okx spot BTC-USDT          median 0.000%  p95 0.023%  max 2.007%  n=895
+       okx perp BTC-USDT-SWAP     median 0.000%  p95 0.008%  max 8.069%  n=896
+       okx perp ETH-USDT-SWAP     median 0.000%  p95 0.007%  max 3.235%  n=896
+       bitunix perp BTCUSDT       median 0.199%  p95 1.659%  max 2.721%  n=892
+PASS   every threshold still holds against a fresh sample
+```
+
+**A p95 over 177 points is the ninth-largest value**, so two transient spikes
+set it; over 895 it is the forty-fifth and they do not. The short sample was not
+measuring the venue, it was measuring its own length — and it produced exactly
+the shape of a real regression, which is the dangerous kind of wrong. 3% is 130x
+the widest of the long-run p95s, comfortably past the 20x the rule asks for.
+
+So the gate refuses a sample too small for the statistic it uses: under 500
+readings the p95 targets report INCONC, which already exits non-zero, and the
+default run is fifteen minutes. A median settles far sooner, so Bitunix's check
+needs only ten. `run-checks` runs the tool **without** `--check` — every hourly
+run writes its distribution to `logs/measurements/` and says nothing, building
+the sample nobody had — and `--check` stays for a deliberate re-derivation with
+enough minutes behind it.
+
+## A recording, so a measurement can be made twice
+
+`tools/record.mjs` writes the venue's **raw** book to JSONL — not the reduced
+payload, because a form that is exact in cumulative notional and wrong about the
+price a given size walks to is the wrong thing to keep forever. It opens the
+venue itself rather than reading this server's socket, and that cost is stated
+plainly: it spends the same IP's rate-limit budget. `tools/replay.mjs` reads it
+back through the same `shared/metrics.js` the panel uses and reports gaps before
+it reports anything else — a capture that lost four minutes to a reconnect has a
+plausible book on either side of the hole, and a distribution computed straight
+across it silently mixes two regimes.
+
+Two habits from earlier incidents are not optional in it: every dependency is
+asserted **before** any collecting starts, and the file is written as `.part`
+and renamed only after an end marker. A partial JSONL is byte-for-byte plausible
+— same header, same book lines, nothing missing but the end — and a waiting loop
+that concluded from a file's size that a capture had finished has already cost
+this repo half an hour.
+
+```
+$ node tools/replay.mjs data/binance-spot-BTCUSDT-2026-09-08T17-07-54.jsonl
+binance spot BTCUSDT
+  samples        60 over 1.0 min, every 1000ms
+  levels         9894..10111 (both sides, before reduction)
+  venue clock    missing on 1/60 samples
+  complete       yes
+  gaps           none
+
+over ±2%, n=60
+  total depth      median  $42.65M   p95  $49.69M   min  $38.70M   max  $50.19M   n=60
+  spread           median 0.001 bps  p95 0.001 bps  min 0.001 bps  max 0.027 bps  n=60
+  venue→us ms      median   117 ms   p95   186 ms   min    57 ms   max   209 ms   n=59
 ```
 
 No tool hardcodes a port. The three websocket-backed ones take `DEPTHVIZ_URL`

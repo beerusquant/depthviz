@@ -61,6 +61,42 @@ Two rules about *when* you may emit, both of which have already been broken here
   a pong (verified), so a quiet-but-healthy book is never mistaken for a dead
   path.
 
+Two more that are not suggestions, because a closing socket keeps delivering:
+
+- **A closed adapter publishes nothing.** `ws.close()` is a handshake, so frames
+  already in flight still reach `onMessage` after the hub has let the feed go —
+  and a book published then is handed to a `Feed` that is being destroyed. Guard
+  the emit on your own `closed` flag; five adapters here did not, and
+  `test-conformance` is what noticed.
+- **`close()` takes your timers with it.** A `stopped` flag stops the *next*
+  poll and leaves the pending one holding the event loop. OKX and Bitunix each
+  cost a second and five seconds of shutdown per feed that way, waiting on a
+  response they would discard.
+
+## The seam, and the contract
+
+Every adapter takes a transport factory as `opts.connect`, and the hub only ever
+builds `opts` as `{ range }` — so nothing in production reaches it. It exists so
+`tools/test-conformance.mjs` can drive your adapter with no network, and
+**adding a venue means adding a row to its table.** A contract that covers
+twelve of thirteen feeds is a contract about nothing. What it will ask of you:
+
+| | |
+|---|---|
+| nothing before the venue speaks | no book published while the REST gate is shut and no frame has been fed |
+| a well-formed book | sorted outward from mid, positive, uncrossed, two-sided, `source` set |
+| an honest clock | the venue's `ts`, or `null` — never a stamp from this process |
+| a dead connection contributes nothing | no book at all on one socket; on an assembled book, one that reaches *less far* |
+| a clean close | idempotent, closes every transport, publishes nothing after, leaves no timer |
+
+Record its payloads with `node tools/capture-fixtures.mjs` — never write them by
+hand, and if your venue is a diff book, capture the snapshot and its anchoring
+frame **together** (`grabPair`). Two captures taken minutes apart and renumbered
+onto each other produce a book that crosses, which reads exactly like a bug in
+your adapter and is a bug in the fixture.
+
 If the venue is a snapshot + versioned-diff book, note that `openDiffBook`
-accepts a `connect` factory. That seam exists for `tools/test-diff-book.mjs` and
-nothing else — do not use it to inject venue behaviour.
+accepts a `connect` factory of its own; the venue adapters forward `opts.connect`
+into it. That seam exists for `tools/test-diff-book.mjs` and
+`tools/test-conformance.mjs` and nothing else — do not use it to inject venue
+behaviour.

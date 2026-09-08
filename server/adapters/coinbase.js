@@ -55,7 +55,10 @@ export default {
     let resubTimer = null;
     let closed = false;
 
-    const publish = coalesce((ts) => emit({
+    // `closed ||` is not belt and braces: ws.close() is a handshake, so frames
+    // already in flight still reach onMessage after the hub has let this feed
+    // go. Publishing one of them hands a book to a Feed that is being destroyed.
+    const publish = coalesce((ts) => closed || emit({
       bids: bids.toArray(), asks: asks.toArray(), ts, source: 'ws',
     }), PUBLISH_MS);
 

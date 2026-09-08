@@ -58,7 +58,7 @@ export function openDiffBook(cfg, emit, status) {
 
   // Coalesced: every diff is applied the instant it lands, but the book is only
   // sorted, bucketed and serialised at the rate anyone can actually consume it.
-  const publish = coalesce((ts) => emit({
+  const publish = coalesce((ts) => closed || emit({
     bids: bids.toArray(), asks: asks.toArray(), ts, source: 'ws',
     // The book reaches past a capped snapshot only because diffs for every
     // price level are applied on top of it, so depth outside the snapshot's

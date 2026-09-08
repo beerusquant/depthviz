@@ -1,155 +1,155 @@
 {
  "binanceSpot": {
   "e": "depthUpdate",
-  "E": 1788878713914,
+  "E": 1788887831314,
   "s": "BTCUSDT",
-  "U": 99846484882,
-  "u": 99846484894,
+  "U": 99853002416,
+  "u": 99853002434,
   "b": [
    [
-    "78407.72000000",
-    "1.20947000"
+    "78688.00000000",
+    "0.77887000"
    ],
    [
-    "78405.15000000",
+    "77507.68000000",
+    "0.00062000"
+   ],
+   [
+    "77294.36000000",
     "0.00000000"
    ],
    [
-    "78402.76000000",
-    "0.00007000"
-   ],
-   [
-    "78402.75000000",
-    "0.12249000"
+    "70819.20000000",
+    "0.00384000"
    ]
   ],
   "a": [
    [
-    "78409.74000000",
-    "0.00255000"
+    "78688.01000000",
+    "3.81239000"
    ],
    [
-    "78410.53000000",
+    "78688.39000000",
+    "0.00642000"
+   ],
+   [
+    "78688.45000000",
+    "0.15021000"
+   ],
+   [
+    "78689.21000000",
     "0.00000000"
-   ],
-   [
-    "78424.55000000",
-    "0.00407000"
-   ],
-   [
-    "78592.01000000",
-    "0.12762000"
    ]
   ]
  },
  "binancePerp": {
   "e": "depthUpdate",
-  "E": 1788878714808,
+  "E": 1788887832242,
   "s": "BTCUSDT",
-  "U": 11505894657388,
-  "u": 11505894722443,
-  "pu": 11505894657367,
+  "U": 11507062991180,
+  "u": 11507063020419,
+  "pu": 11507062991086,
   "b": [
    [
-    "27950.20",
-    "0.021"
+    "1000.00",
+    "25.888"
    ],
    [
-    "27956.10",
-    "0.014"
+    "28142.20",
+    "0.189"
    ],
    [
-    "27957.40",
-    "0.007"
+    "28247.60",
+    "0.490"
    ],
    [
-    "27959.90",
-    "0.007"
+    "62918.00",
+    "0.000"
    ]
   ],
   "a": [
    [
-    "78350.30",
-    "9.541"
+    "78642.30",
+    "15.377"
    ],
    [
-    "78350.40",
-    "0.001"
+    "78642.40",
+    "1.012"
    ],
    [
-    "78350.50",
-    "0.000"
+    "78642.50",
+    "0.003"
    ],
    [
-    "78350.80",
-    "0.002"
+    "78642.60",
+    "0.077"
    ]
   ]
  },
  "aster": {
-  "E": 1788878715639,
-  "U": 533197455914,
-  "u": 533197459013,
-  "pu": 533197455727,
+  "E": 1788887832973,
+  "U": 533391565292,
+  "u": 533391568067,
+  "pu": 533391565004,
   "b": [
    [
-    "77923.4",
-    "0.013"
+    "78523.8",
+    "0.807"
    ],
    [
-    "77931.5",
-    "0.019"
+    "78588.2",
+    "0.123"
    ],
    [
-    "78176.8",
-    "0.153"
+    "78596.8",
+    "0.000"
    ],
    [
-    "78220.4",
-    "0.014"
+    "78625.2",
+    "1.270"
    ]
   ],
   "a": [
    [
-    "78351.2",
-    "0.994"
+    "78642.9",
+    "0.000"
    ],
    [
-    "78355.5",
-    "2.498"
+    "78643.0",
+    "0.000"
    ],
    [
-    "78355.6",
-    "8.420"
+    "78645.1",
+    "0.000"
    ],
    [
-    "78356.9",
-    "0.009"
+    "78646.1",
+    "0.000"
    ]
   ]
  },
- "mexcSpotProtobufB64": "Ci9zcG90QHB1YmxpYy5hZ2dyZS5kZXB0aC52My5hcGkucGJAMTAwbXNAQlRDVVNEVBoHQlRDVVNEVDDa/+uLiDTKE80GChQKCDc4MzgzLjU1EggzLjU4NDY5OAoWCgg3ODM4My41NhIKMC4wMDEyNjQ2MQoWCgg3ODM4My41NxIKMC4wMDEzNjIwMQoNCgg3ODM4My41OBIBMAoWCgg3ODM4My41ORIKMC4wMTQ3NjIzOAoNCgg3ODM4My42OBIBMAoWCgg3ODM4My43MxIKMC4wMDEyNjY5OQoUCgg3ODM4My43NBIIMC4xNTk0MTkKDQoINzgzODMuNzUSATAKDQoINzgzODMuNzYSATAKFAoINzgzODguMjISCDAuMDAwMTEyCg0KCDc4Mzg4LjkzEgEwChYKCDc4Mzg5LjA4Ego1Ljg4ODY3MjM2CgwKBzc4Mzg5LjESATAKDQoINzgzOTcuODcSATAKFgoINzg0MDEuMTcSCjUuODgxMTIzNzkKFQoHNzg0MDQuNRIKMC4wMDM4MjYzMQoXCgg3ODc5Ni4zORILMjYuMTY3NDE3ODQKDQoINzg4NjQuMjcSATASEwoINzgzODMuMDYSBzAuMDAwNjISDQoINzgzODIuMzMSATASDQoINzgzNzkuOTkSATASFAoINzgzNjYuMTgSCDEuMzM0ODc5EhQKCDc4MzY2LjE3EggwLjA2ODA4MRIWCgg3ODM2Ni4xNhIKMC4wMDEyMjc1OBIWCgg3ODM2Ni4xMxIKMC4wMDEyNjM1MhIUCgg3ODM2Ni4xMhIIMC4wNjUxODISDQoINzgzNjUuODMSATASDQoINzgzNjUuODISATASDQoINzgzNjUuODESATASDQoINzgzNjUuNzgSATASDQoINzgzNjUuNzcSATASFgoINzgzNjAuOTUSCjYuNjY0MTM3NzISDQoINzgzNjAuNTgSATASFAoINzgzNTMuNjgSCDAuMDAxNzA0Eg0KCDc4MzUyLjE4EgEwEg0KCDc4MzUxLjk0EgEwEhYKCDc4MzQ5LjU2Ego2LjczNDUyMjY3EhYKCDc3NTk5LjQ3EgowLjAwMDE0MTcxEg0KCDc3NTk5LjEyEgEwGidzcG90QHB1YmxpYy5hZ2dyZS5kZXB0aC52My5hcGkucGJAMTAwbXMiCzgwODQxNzEyMjgzKgs4MDg0MTcxMjMyNTC6/+uLiDQ=",
+ "mexcSpotProtobufB64": "Ci9zcG90QHB1YmxpYy5hZ2dyZS5kZXB0aC52My5hcGkucGJAMTAwbXNAQlRDVVNEVBoHQlRDVVNEVDDOvJiQiDTKE7oGCg0KCDc4NjkyLjg2EgEwChYKCDc4NjkyLjkzEgo2LjE2NDcxNjg3Cg0KCDc4Njk1Ljk4EgEwCg0KCDc5MDI4Ljc1EgEwCg0KCDc5MTM1LjY4EgEwChcKCDc5MTQ2LjI1EgsyNC42Mjk0NjE1NAoNCgg3OTQ1Mi4xMxIBMAoNCgg3OTU2Ny41NhIBMAoXCgg3OTYwNS43NxILMjQuNDU0MDY2MDMKDAoHNzk3NzYuMxIBMAoNCgg3OTkyNy45MRIBMAoXCgg3OTk0NS40OBILMjYuMDEwNDI3MzISFAoINzg2NzIuNzISCDAuMjI2NjAzEhQKCDc4NjcyLjcxEggwLjQzOTQzORIMCgc3ODY3Mi43EgEwEg0KCDc4NjcyLjY5EgEwEg0KCDc4NjcyLjY3EgEwEg0KCDc4NjcyLjY2EgEwEg0KCDc4NjcyLjU5EgEwEg0KCDc4NjcyLjU4EgEwEhYKCDc4NjcyLjUyEgowLjAwMTI3NzE5EhEKCDc4NjcyLjUxEgUwLjAzORIMCgc3ODY3Mi41EgEwEg0KCDc4NjcyLjQ5EgEwEg0KCDc4NjcyLjQ3EgEwEg0KCDc4NjcyLjQ2EgEwEg0KCDc4NjcyLjM5EgEwEg0KCDc4NjcyLjM4EgEwEhYKCDc4NjcxLjgxEgowLjAwMTI4MTE1Eg0KCDc4NjcxLjc5EgEwEg0KCDc4NjcxLjc2EgEwEg0KCDc4NjcxLjY4EgEwEhQKBzc4NjY1LjkSCTYuNjcxMTEzNhINCgg3ODY2NS44OBIBMBINCgg3ODY2NS44NRIBMBISCgc3ODY2MC43EgcwLjAwMDY0EhMKCDc4NjYwLjY4EgcwLjAwMDY0Eg0KCDc4NjU3LjYzEgEwEg0KCDc4NjU3LjIyEgEwEgwKBzc4NjU1LjcSATASFgoINzg2NTUuMzMSCjYuMTY0Nzk2NzkSDQoINzg2NTQuMzkSATASFgoINzc4ODkuNTISCjAuMDAwMTQxNzEaJ3Nwb3RAcHVibGljLmFnZ3JlLmRlcHRoLnYzLmFwaS5wYkAxMDBtcyILODA4NTE5NDc5MTcqCzgwODUxOTQ3OTc5MP67mJCINA==",
  "mexcPerp": {
   "channel": "push.depth",
-  "ts": 1788878717450,
+  "ts": 1788887834815,
   "data": {
    "bids": [
     [
-     75999.5,
-     0,
-     0
+     78642,
+     166422,
+     1
     ],
     [
-     78350,
-     161099,
-     3
+     76282.8,
+     14,
+     1
     ]
    ],
    "asks": [],
-   "version": 41599030415,
-   "begin": 41599030413,
-   "end": 41599030415,
-   "cts": 1788878717444
+   "version": 41602417820,
+   "begin": 41602417819,
+   "end": 41602417820,
+   "cts": 1788887834776
   }
  },
  "okxBooks": {
@@ -158,59 +158,59 @@
    {
     "bids": [
      [
-      "78354.9",
-      "150.75",
+      "78629.1",
+      "7.36",
       "0",
-      "19"
+      "3"
      ],
      [
-      "78354.8",
-      "0.02",
-      "0",
-      "2"
-     ],
-     [
-      "78353.2",
+      "78628.5",
       "0",
       "0",
       "0"
      ],
      [
-      "78334.9",
-      "0.01",
+      "78625.9",
+      "48.12",
       "0",
-      "1"
+      "4"
+     ],
+     [
+      "78620.1",
+      "0.09",
+      "0",
+      "4"
      ]
     ],
     "asks": [
      [
-      "78355",
-      "593.24",
+      "78638.6",
+      "1941.37",
       "0",
-      "28"
+      "91"
      ],
      [
-      "78356.3",
-      "0.03",
+      "78640.4",
+      "10.85",
       "0",
-      "2"
+      "5"
      ],
      [
-      "78356.4",
-      "46.56",
+      "78652.3",
       "0",
-      "3"
+      "0",
+      "0"
      ],
      [
-      "78356.5",
-      "0.03",
+      "78653.2",
+      "0.63",
       "0",
-      "3"
+      "1"
      ]
     ],
-    "ts": "1788878718708",
-    "seqId": 338572328676,
-    "prevSeqId": 338572328594
+    "ts": "1788887836002",
+    "seqId": 338592534873,
+    "prevSeqId": 338592534809
    }
   ]
  },
@@ -240,7 +240,7 @@
  "coinbase": {
   "snapshot": {
    "channel": "l2_data",
-   "timestamp": "2026-09-08T14:45:20.306204085Z",
+   "timestamp": "2026-09-08T17:17:17.383802452Z",
    "sequence_num": 0,
    "events": [
     {
@@ -248,39 +248,51 @@
      "updates": [
       {
        "side": "bid",
-       "event_time": "2026-09-08T14:45:19.871183Z",
-       "price_level": "78359.03",
-       "new_quantity": "0.2202956"
+       "event_time": "2026-09-08T17:17:16.800674Z",
+       "price_level": "78664.86",
+       "new_quantity": "0.02814632"
       },
       {
        "side": "bid",
-       "event_time": "2026-09-08T14:45:19.871183Z",
-       "price_level": "78357.5",
-       "new_quantity": "0.01998937"
+       "event_time": "2026-09-08T17:17:16.800674Z",
+       "price_level": "78664.85",
+       "new_quantity": "0.02811879"
       },
       {
        "side": "bid",
-       "event_time": "2026-09-08T14:45:19.871183Z",
-       "price_level": "78354.41",
-       "new_quantity": "0.00038679"
+       "event_time": "2026-09-08T17:17:16.800674Z",
+       "price_level": "78664.84",
+       "new_quantity": "0.02811879"
       },
       {
        "side": "bid",
-       "event_time": "2026-09-08T14:45:19.871183Z",
-       "price_level": "78353.94",
-       "new_quantity": "0.22966046"
+       "event_time": "2026-09-08T17:17:16.800674Z",
+       "price_level": "78664.83",
+       "new_quantity": "0.02763079"
       },
       {
-       "side": "bid",
-       "event_time": "2026-09-08T14:45:19.871183Z",
-       "price_level": "78351.94",
-       "new_quantity": "0.01998937"
+       "side": "offer",
+       "event_time": "2026-09-08T17:17:16.800674Z",
+       "price_level": "78664.87",
+       "new_quantity": "0.0513"
       },
       {
-       "side": "bid",
-       "event_time": "2026-09-08T14:45:19.871183Z",
-       "price_level": "78351.51",
-       "new_quantity": "0.35132927"
+       "side": "offer",
+       "event_time": "2026-09-08T17:17:16.800674Z",
+       "price_level": "78665",
+       "new_quantity": "0.5"
+      },
+      {
+       "side": "offer",
+       "event_time": "2026-09-08T17:17:16.800674Z",
+       "price_level": "78665.84",
+       "new_quantity": "0.025"
+      },
+      {
+       "side": "offer",
+       "event_time": "2026-09-08T17:17:16.800674Z",
+       "price_level": "78666",
+       "new_quantity": "1"
       }
      ]
     }
@@ -288,7 +300,7 @@
   },
   "update": {
    "channel": "l2_data",
-   "timestamp": "2026-09-08T14:45:20.326641114Z",
+   "timestamp": "2026-09-08T17:17:17.405766552Z",
    "sequence_num": 1,
    "events": [
     {
@@ -296,39 +308,51 @@
      "updates": [
       {
        "side": "bid",
-       "event_time": "2026-09-08T14:45:19.929985Z",
-       "price_level": "78359.03",
-       "new_quantity": "0.24727582"
+       "event_time": "2026-09-08T17:17:16.859082Z",
+       "price_level": "78665.68",
+       "new_quantity": "0.1345"
       },
       {
        "side": "bid",
-       "event_time": "2026-09-08T14:45:19.929985Z",
-       "price_level": "78353.56",
-       "new_quantity": "0.01707783"
+       "event_time": "2026-09-08T17:17:16.859082Z",
+       "price_level": "78664.86",
+       "new_quantity": "0.23965129"
       },
       {
        "side": "bid",
-       "event_time": "2026-09-08T14:45:19.929985Z",
-       "price_level": "76833.57",
-       "new_quantity": "0.00583"
+       "event_time": "2026-09-08T17:17:16.859082Z",
+       "price_level": "78664.85",
+       "new_quantity": "0.02811879"
       },
       {
        "side": "bid",
-       "event_time": "2026-09-08T14:45:19.929985Z",
-       "price_level": "76833.05",
-       "new_quantity": "0.00000001"
+       "event_time": "2026-09-08T17:17:16.859082Z",
+       "price_level": "78663.82",
+       "new_quantity": "0.10169858"
       },
       {
        "side": "offer",
-       "event_time": "2026-09-08T14:45:19.929985Z",
-       "price_level": "78360.35",
-       "new_quantity": "0.004"
-      },
-      {
-       "side": "offer",
-       "event_time": "2026-09-08T14:45:19.929985Z",
-       "price_level": "78360.5",
+       "event_time": "2026-09-08T17:17:16.859082Z",
+       "price_level": "78664.87",
        "new_quantity": "0"
+      },
+      {
+       "side": "offer",
+       "event_time": "2026-09-08T17:17:16.859082Z",
+       "price_level": "78665",
+       "new_quantity": "0"
+      },
+      {
+       "side": "offer",
+       "event_time": "2026-09-08T17:17:16.859082Z",
+       "price_level": "78665.84",
+       "new_quantity": "0"
+      },
+      {
+       "side": "offer",
+       "event_time": "2026-09-08T17:17:16.859082Z",
+       "price_level": "78665.98",
+       "new_quantity": "0.025"
       }
      ]
     }
@@ -336,7 +360,7 @@
   },
   "ctrl": {
    "channel": "subscriptions",
-   "sequence_num": 2
+   "sequence_num": 3
   }
  },
  "lighterMarketId": 1,
@@ -344,73 +368,61 @@
   "snapshot": {
    "type": "subscribed/order_book",
    "order_book": {
-    "nonce": 21432461031,
+    "nonce": 21444079470,
     "bids": [
      {
-      "price": "78359.4",
-      "size": "0.00020"
+      "price": "78643.6",
+      "size": "0.00026"
      },
      {
-      "price": "78359.3",
-      "size": "0.00020"
+      "price": "78641.9",
+      "size": "0.00537"
      },
      {
-      "price": "78359.2",
-      "size": "0.00020"
+      "price": "78641.8",
+      "size": "0.03882"
      },
      {
-      "price": "78359.1",
-      "size": "0.00020"
+      "price": "78641.7",
+      "size": "0.06685"
      }
     ],
     "asks": [
      {
-      "price": "78359.5",
-      "size": "0.00309"
+      "price": "78644.0",
+      "size": "0.00776"
      },
      {
-      "price": "78360.2",
-      "size": "0.64957"
+      "price": "78644.8",
+      "size": "0.00013"
      },
      {
-      "price": "78360.8",
-      "size": "0.00704"
+      "price": "78646.0",
+      "size": "0.38148"
      },
      {
-      "price": "78360.9",
-      "size": "2.52844"
+      "price": "78646.9",
+      "size": "0.00013"
      }
     ]
    }
   },
   "update": {
    "type": "update/order_book",
-   "last_updated_at": 1788878722418190,
+   "last_updated_at": 1788887838790764,
    "order_book": {
-    "nonce": 21432461096,
-    "begin_nonce": 21432461031,
+    "nonce": 21444079508,
+    "begin_nonce": 21444079470,
     "bids": [
      {
-      "price": "78328.7",
-      "size": "0.50000"
-     },
-     {
-      "price": "78322.9",
-      "size": "0.00000"
+      "price": "78630.7",
+      "size": "0.19348"
      }
     ],
     "asks": [
      {
-      "price": "78360.0",
-      "size": "0.00100"
-     },
-     {
-      "price": "78363.2",
-      "size": "0.00000"
-     },
-     {
-      "price": "78366.0",
-      "size": "2.53394"
+      "price": "78644.0",
+      "size": "0.00676"
      }
     ]
    }
@@ -418,51 +430,66 @@
  },
  "bitunixPerp": {
   "ch": "depth_books",
-  "ts": 1788878723850,
+  "ts": 1788887840264,
   "data": {
    "b": [
     [
-     "78353",
-     "2.1068"
+     "78639.1",
+     "2.2714"
     ],
     [
-     "78352.9",
-     "1.9285"
+     "78639",
+     "3.3395"
     ],
     [
-     "78352.8",
-     "1.1416"
+     "78638.9",
+     "3.1268"
     ],
     [
-     "78352.7",
-     "1.7647"
+     "78638.8",
+     "2.4394"
     ]
    ],
    "a": [
     [
-     "78353.1",
-     "3.0954"
+     "78639.2",
+     "1.392"
     ],
     [
-     "78353.2",
-     "1.0582"
+     "78639.3",
+     "2.7479"
     ],
     [
-     "78353.3",
-     "0.8832"
+     "78639.4",
+     "1.5934"
     ],
     [
-     "78353.4",
-     "3.133"
+     "78639.5",
+     "1.3287"
     ]
    ]
   }
  },
  "bitunixKlines": [
   {
+   "ts": "2026-09-08T17:00:00Z",
+   "close": "78680.01",
+   "volume": "20.35056"
+  },
+  {
+   "ts": "2026-09-08T16:00:00Z",
+   "close": "78735.88",
+   "volume": "65.08479"
+  },
+  {
+   "ts": "2026-09-08T15:00:00Z",
+   "close": "78904",
+   "volume": "108.37679"
+  },
+  {
    "ts": "2026-09-08T14:00:00Z",
-   "close": "78390.32",
-   "volume": "102.32903"
+   "close": "78567.53",
+   "volume": "133.51046"
   },
   {
    "ts": "2026-09-08T13:00:00Z",
@@ -573,22 +600,982 @@
    "ts": "2026-09-07T16:00:00Z",
    "close": "79028.88",
    "volume": "48.55035"
-  },
-  {
-   "ts": "2026-09-07T15:00:00Z",
-   "close": "78821.14",
-   "volume": "103.4926"
-  },
-  {
-   "ts": "2026-09-07T14:00:00Z",
-   "close": "79191.95",
-   "volume": "96.01704"
-  },
-  {
-   "ts": "2026-09-07T13:00:00Z",
-   "close": "79352.01",
-   "volume": "65.23296"
   }
  ],
- "_capturedAt": "2026-09-08T14:45:25.421Z"
+ "hyperliquid": {
+  "fine": {
+   "channel": "l2Book",
+   "data": {
+    "coin": "BTC",
+    "time": 1788887842455,
+    "levels": [
+     [
+      {
+       "px": "78652.0",
+       "sz": "1.9253",
+       "n": 5
+      },
+      {
+       "px": "78651.0",
+       "sz": "0.00013",
+       "n": 1
+      },
+      {
+       "px": "78649.0",
+       "sz": "0.0013",
+       "n": 2
+      },
+      {
+       "px": "78647.0",
+       "sz": "0.84122",
+       "n": 3
+      },
+      {
+       "px": "78645.0",
+       "sz": "0.01907",
+       "n": 1
+      },
+      {
+       "px": "78644.0",
+       "sz": "0.8495",
+       "n": 5
+      }
+     ],
+     [
+      {
+       "px": "78653.0",
+       "sz": "12.022",
+       "n": 46
+      },
+      {
+       "px": "78654.0",
+       "sz": "4.01383",
+       "n": 8
+      },
+      {
+       "px": "78655.0",
+       "sz": "1.2908",
+       "n": 3
+      },
+      {
+       "px": "78656.0",
+       "sz": "2.55143",
+       "n": 4
+      },
+      {
+       "px": "78657.0",
+       "sz": "0.96439",
+       "n": 6
+      },
+      {
+       "px": "78658.0",
+       "sz": "4.03396",
+       "n": 3
+      }
+     ]
+    ]
+   }
+  },
+  "coarse": {
+   "channel": "l2Book",
+   "data": {
+    "coin": "BTC",
+    "time": 1788887843482,
+    "levels": [
+     [
+      {
+       "px": "78600.0",
+       "sz": "217.05356",
+       "n": 402
+      },
+      {
+       "px": "78500.0",
+       "sz": "314.21933",
+       "n": 437
+      },
+      {
+       "px": "78400.0",
+       "sz": "213.16472",
+       "n": 294
+      },
+      {
+       "px": "78300.0",
+       "sz": "243.91146",
+       "n": 289
+      },
+      {
+       "px": "78200.0",
+       "sz": "186.8399",
+       "n": 303
+      },
+      {
+       "px": "78100.0",
+       "sz": "226.98409",
+       "n": 271
+      }
+     ],
+     [
+      {
+       "px": "78700.0",
+       "sz": "190.84301",
+       "n": 272
+      },
+      {
+       "px": "78800.0",
+       "sz": "326.07515",
+       "n": 349
+      },
+      {
+       "px": "78900.0",
+       "sz": "143.32258",
+       "n": 227
+      },
+      {
+       "px": "79000.0",
+       "sz": "278.12035",
+       "n": 322
+      },
+      {
+       "px": "79100.0",
+       "sz": "159.98794",
+       "n": 197
+      },
+      {
+       "px": "79200.0",
+       "sz": "67.03219",
+       "n": 189
+      }
+     ]
+    ]
+   }
+  }
+ },
+ "anchored": {
+  "binanceSpot": {
+   "snapshot": {
+    "lastUpdateId": 99853008660,
+    "bids": [
+     [
+      "78680.00000000",
+      "2.16664000"
+     ],
+     [
+      "78679.99000000",
+      "0.00013000"
+     ],
+     [
+      "78679.98000000",
+      "0.00013000"
+     ],
+     [
+      "78679.83000000",
+      "0.00400000"
+     ]
+    ],
+    "asks": [
+     [
+      "78680.01000000",
+      "0.59785000"
+     ],
+     [
+      "78680.02000000",
+      "0.00104000"
+     ],
+     [
+      "78680.03000000",
+      "0.00013000"
+     ],
+     [
+      "78680.20000000",
+      "0.00014000"
+     ]
+    ]
+   },
+   "frame": {
+    "e": "depthUpdate",
+    "E": 1788887845714,
+    "s": "BTCUSDT",
+    "U": 99853008661,
+    "u": 99853008673,
+    "b": [
+     [
+      "78675.79000000",
+      "0.00579000"
+     ],
+     [
+      "78674.03000000",
+      "0.01134000"
+     ],
+     [
+      "77499.80000000",
+      "0.00070000"
+     ],
+     [
+      "70812.00000000",
+      "0.00409000"
+     ]
+    ],
+    "a": [
+     [
+      "78693.92000000",
+      "0.00000000"
+     ],
+     [
+      "78705.12000000",
+      "0.00000000"
+     ],
+     [
+      "78792.10000000",
+      "0.00000000"
+     ],
+     [
+      "78794.65000000",
+      "0.00579000"
+     ]
+    ]
+   }
+  },
+  "binancePerp": {
+   "snapshot": {
+    "lastUpdateId": 11507064454800,
+    "E": 1788887847523,
+    "bids": [
+     [
+      "78644.90",
+      "12.344"
+     ],
+     [
+      "78644.80",
+      "0.080"
+     ],
+     [
+      "78644.70",
+      "0.003"
+     ],
+     [
+      "78644.60",
+      "0.050"
+     ]
+    ],
+    "asks": [
+     [
+      "78645.00",
+      "4.832"
+     ],
+     [
+      "78645.10",
+      "0.002"
+     ],
+     [
+      "78645.50",
+      "0.001"
+     ],
+     [
+      "78645.60",
+      "0.022"
+     ]
+    ]
+   },
+   "frame": {
+    "e": "depthUpdate",
+    "E": 1788887847542,
+    "s": "BTCUSDT",
+    "U": 11507064451120,
+    "u": 11507064455747,
+    "pu": 11507064451069,
+    "b": [
+     [
+      "1000.00",
+      "25.888"
+     ],
+     [
+      "28344.90",
+      "1.085"
+     ],
+     [
+      "28444.90",
+      "1.015"
+     ],
+     [
+      "70780.40",
+      "0.002"
+     ]
+    ],
+    "a": [
+     [
+      "78765.10",
+      "0.006"
+     ],
+     [
+      "78769.20",
+      "0.382"
+     ],
+     [
+      "78777.10",
+      "0.000"
+     ],
+     [
+      "78777.20",
+      "0.000"
+     ]
+    ]
+   }
+  },
+  "aster": {
+   "snapshot": {
+    "lastUpdateId": 533391899835,
+    "E": 1788887849689,
+    "bids": [
+     [
+      "78660.6",
+      "0.068"
+     ],
+     [
+      "78659.8",
+      "0.068"
+     ],
+     [
+      "78658.9",
+      "0.087"
+     ],
+     [
+      "78658.8",
+      "0.150"
+     ]
+    ],
+    "asks": [
+     [
+      "78660.7",
+      "0.387"
+     ],
+     [
+      "78661.1",
+      "3.435"
+     ],
+     [
+      "78661.3",
+      "6.363"
+     ],
+     [
+      "78661.7",
+      "0.001"
+     ]
+    ]
+   },
+   "frame": {
+    "e": "depthUpdate",
+    "E": 1788887849734,
+    "s": "BTCUSDT",
+    "U": 533391898073,
+    "u": 533391900264,
+    "pu": 533391897608,
+    "b": [
+     [
+      "78591.1",
+      "3.182"
+     ],
+     [
+      "78630.8",
+      "0.000"
+     ],
+     [
+      "78651.4",
+      "0.000"
+     ],
+     [
+      "78655.0",
+      "0.027"
+     ]
+    ],
+    "a": [
+     [
+      "78661.3",
+      "6.357"
+     ]
+    ]
+   }
+  },
+  "mexcPerp": {
+   "snapshot": {
+    "success": true,
+    "code": 0,
+    "data": {
+     "cts": null,
+     "asks": [
+      [
+       78655.4,
+       1701,
+       1
+      ],
+      [
+       78655.7,
+       638,
+       1
+      ],
+      [
+       78655.8,
+       24283,
+       2
+      ],
+      [
+       78655.9,
+       5117,
+       1
+      ]
+     ],
+     "bids": [
+      [
+       78655.3,
+       45938,
+       6
+      ],
+      [
+       78655.2,
+       16172,
+       2
+      ],
+      [
+       78655.1,
+       5132,
+       1
+      ],
+      [
+       78655,
+       6137,
+       1
+      ]
+     ],
+     "version": 41602422850,
+     "timestamp": 1788887850632
+    }
+   },
+   "frame": {
+    "channel": "push.depth",
+    "ts": 1788887850778,
+    "data": {
+     "bids": [
+      [
+       78498.5,
+       112933,
+       1
+      ],
+      [
+       78537.8,
+       49582,
+       1
+      ],
+      [
+       76295.7,
+       15,
+       2
+      ]
+     ],
+     "asks": [
+      [
+       78813.9,
+       0,
+       0
+      ],
+      [
+       78703,
+       3983,
+       1
+      ],
+      [
+       78900,
+       2974,
+       25
+      ],
+      [
+       78813.1,
+       53543,
+       1
+      ]
+     ],
+     "version": 41602422852,
+     "begin": 41602422846,
+     "end": 41602422852,
+     "cts": 1788887850777
+    }
+   }
+  },
+  "mexcSpot": {
+   "snapshot": {
+    "lastUpdateId": 80851961448,
+    "bids": [
+     [
+      "78685.82",
+      "0.00195600"
+     ],
+     [
+      "78685.81",
+      "0.00163000"
+     ],
+     [
+      "78683.78",
+      "6.44523100"
+     ],
+     [
+      "78683.77",
+      "0.00130647"
+     ],
+     [
+      "78683.76",
+      "0.00116278"
+     ],
+     [
+      "78683.53",
+      "0.00538200"
+     ],
+     [
+      "78683.04",
+      "0.01116700"
+     ],
+     [
+      "78682.13",
+      "0.00001906"
+     ],
+     [
+      "78682.07",
+      "0.05101416"
+     ],
+     [
+      "78681.44",
+      "0.05101416"
+     ],
+     [
+      "78680.33",
+      "0.05101416"
+     ],
+     [
+      "78679.65",
+      "0.05101416"
+     ],
+     [
+      "78678.25",
+      "5.88221406"
+     ],
+     [
+      "78676.47",
+      "0.36391698"
+     ],
+     [
+      "78675.82",
+      "0.00063500"
+     ],
+     [
+      "78674.24",
+      "0.36391698"
+     ],
+     [
+      "78673.30",
+      "0.00316800"
+     ],
+     [
+      "78672.66",
+      "0.00023896"
+     ],
+     [
+      "78672.65",
+      "0.36391698"
+     ],
+     [
+      "78671.83",
+      "0.00596800"
+     ],
+     [
+      "78671.82",
+      "0.00596800"
+     ],
+     [
+      "78671.81",
+      "0.00596800"
+     ],
+     [
+      "78671.41",
+      "0.00001611"
+     ],
+     [
+      "78671.24",
+      "0.00010400"
+     ],
+     [
+      "78671.23",
+      "0.00010400"
+     ],
+     [
+      "78671.02",
+      "0.36391698"
+     ],
+     [
+      "78670.91",
+      "0.00125335"
+     ],
+     [
+      "78670.82",
+      "0.00004745"
+     ],
+     [
+      "78670.73",
+      "0.49592800"
+     ],
+     [
+      "78670.71",
+      "0.08644800"
+     ],
+     [
+      "78670.68",
+      "0.31456800"
+     ],
+     [
+      "78670.67",
+      "0.13444800"
+     ],
+     [
+      "78670.53",
+      "0.00994400"
+     ],
+     [
+      "78670.46",
+      "0.00320000"
+     ],
+     [
+      "78669.97",
+      "0.01280000"
+     ],
+     [
+      "78669.96",
+      "0.35618400"
+     ],
+     [
+      "78669.95",
+      "0.24000000"
+     ],
+     [
+      "78669.92",
+      "5.86470292"
+     ],
+     [
+      "78669.82",
+      "0.00697600"
+     ],
+     [
+      "78668.84",
+      "0.36391698"
+     ]
+    ],
+    "asks": [
+     [
+      "78686.00",
+      "0.93051400"
+     ],
+     [
+      "78686.01",
+      "0.00126100"
+     ],
+     [
+      "78686.02",
+      "0.00126100"
+     ],
+     [
+      "78686.10",
+      "0.07041260"
+     ],
+     [
+      "78686.38",
+      "0.01038700"
+     ],
+     [
+      "78687.44",
+      "0.05101416"
+     ],
+     [
+      "78688.09",
+      "0.05101416"
+     ],
+     [
+      "78688.72",
+      "0.05101416"
+     ],
+     [
+      "78689.04",
+      "0.35215113"
+     ],
+     [
+      "78689.41",
+      "0.05101416"
+     ],
+     [
+      "78691.05",
+      "0.35215113"
+     ],
+     [
+      "78691.51",
+      "6.58790290"
+     ],
+     [
+      "78691.95",
+      "0.00007293"
+     ],
+     [
+      "78691.97",
+      "0.00006469"
+     ],
+     [
+      "78691.98",
+      "0.00006692"
+     ],
+     [
+      "78692.02",
+      "0.00007145"
+     ],
+     [
+      "78692.07",
+      "0.00007322"
+     ],
+     [
+      "78692.11",
+      "0.00007247"
+     ],
+     [
+      "78692.12",
+      "0.00007204"
+     ],
+     [
+      "78692.17",
+      "0.00007551"
+     ],
+     [
+      "78692.20",
+      "0.00006641"
+     ],
+     [
+      "78692.22",
+      "0.00006747"
+     ],
+     [
+      "78692.28",
+      "0.00007512"
+     ],
+     [
+      "78692.33",
+      "0.00006775"
+     ],
+     [
+      "78692.53",
+      "0.00011200"
+     ],
+     [
+      "78692.54",
+      "0.12109600"
+     ],
+     [
+      "78692.68",
+      "0.35215113"
+     ],
+     [
+      "78692.70",
+      "0.01044000"
+     ],
+     [
+      "78694.33",
+      "0.35215113"
+     ],
+     [
+      "78697.68",
+      "0.35215113"
+     ],
+     [
+      "78700.05",
+      "0.35215113"
+     ],
+     [
+      "78702.42",
+      "0.35215113"
+     ],
+     [
+      "78703.44",
+      "5.89627759"
+     ],
+     [
+      "78704.79",
+      "0.35215113"
+     ],
+     [
+      "78708.20",
+      "0.00381154"
+     ],
+     [
+      "78721.65",
+      "0.00060367"
+     ],
+     [
+      "78728.56",
+      "0.00228633"
+     ],
+     [
+      "78732.14",
+      "0.00025402"
+     ],
+     [
+      "78746.41",
+      "0.00322300"
+     ],
+     [
+      "78748.60",
+      "0.00662664"
+     ]
+    ]
+   },
+   "frame": "Ci9zcG90QHB1YmxpYy5hZ2dyZS5kZXB0aC52My5hcGkucGJAMTAwbXNAQlRDVVNEVBoHQlRDVVNEVDC+z5mQiDTKE/QHChQKCDc4Njg1Ljk5EggwLjkzMDUxNAoRCgU3ODY4NhIIMC4wMDEyNjEKFAoINzg2ODYuMDESCDAuMDAxMjYxCg0KCDc4Njg2LjAyEgEwCg0KCDc4Njg2LjAzEgEwCg0KCDc4Njg2LjA0EgEwCg0KCDc4Njg2LjA2EgEwCg0KCDc4Njg2LjA3EgEwCg0KCDc4Njg2LjA4EgEwCg0KCDc4Njg2LjIzEgEwChQKCDc4Njg2LjM3EggwLjAxMDM4NwoNCgg3ODY4Ni4zOBIBMAoNCgg3ODY4Ni4zORIBMAoMCgc3ODY4Ni40EgEwCg0KCDc4Njg2LjQ0EgEwChUKBzc4NjkxLjUSCjYuOTIzODMwMDUKDQoINzg2OTEuNTESATAKDQoINzg2OTEuNTMSATAKDQoINzg2OTEuNTQSATAKDQoINzg2OTEuNTcSATAKFgoINzg2OTEuOTUSCjAuMDAwMDcyOTMKFgoINzg2OTEuOTcSCjAuMDAwMDY0NjkKFgoINzg2OTEuOTgSCjAuMDAwMDY2OTIKDQoINzg2OTIuNzESATAKDQoINzg2OTMuMTgSATAKDQoINzg2OTMuMTkSATAKDQoINzg3MDEuNDQSATAKDAoHNzg3MDEuNRIBMAoNCgg3ODcwMi42ORIBMAoWCgg3ODcwMy4yMhIKNi42MTY2NjIzMgoNCgg3ODcwMy40NBIBMBIWCgg3ODY3OC4yNRIKNS44ODIyMTQwNhINCgg3ODY3OC4yNBIBMBINCgg3ODY2OS45MhIBMBINCgg3ODY2Ny4zNBIBMBINCgg3ODY2Ny4zMhIBMBIWCgg3ODY2Ny4yMhIKNS45NzA5MzU2MxIMCgc3ODY2Ni45EgEwEg0KCDc4MzA1Ljc4EgEwEg0KCDc4MzA1LjUxEgEwEhcKCDc4Mjk5LjEzEgsyNi42MDIzNjQ2NhINCgg3ODI5NS41NhIBMBINCgg3ODIyMi40OBIBMBINCgg3Nzk2OS41NBIBMBINCgg3Nzk0MC4zMxIBMBINCgg3NzkyMS43MhIBMBINCgg3Nzg5OS4wOBIBMBINCgg3Nzg5OS4wNhIBMBIXCgg3Nzg4MS41MRILMjYuMjEzMjEzODQSDQoINzc4NTQuNjUSATASDQoINzc2MDYuMjgSATASDQoINzc1ODcuMTgSATASDAoHNzc1MDkuORIBMBINCgg3NzQ3My45MxIBMBIXCgg3NzQ2NS4xMhILMjQuNTI5MjA4MzEaJ3Nwb3RAcHVibGljLmFnZ3JlLmRlcHRoLnYzLmFwaS5wYkAxMDBtcyILODA4NTE5NjEzODEqCzgwODUxOTYxNDY4MJ/PmZCINA=="
+  }
+ },
+ "rest": {
+  "mexcContractDetail": {
+   "success": true,
+   "code": 0,
+   "data": [
+    {
+     "symbol": "BTC_USDT",
+     "contractSize": 0.0001,
+     "state": 0,
+     "baseCoin": "BTC",
+     "quoteCoin": "USDT"
+    }
+   ]
+  },
+  "okxBooksFull": {
+   "code": "0",
+   "data": [
+    {
+     "bids": [
+      [
+       "78653.2",
+       "574.56",
+       "51"
+      ],
+      [
+       "78652.1",
+       "0.01",
+       "1"
+      ],
+      [
+       "78652",
+       "7.06",
+       "4"
+      ],
+      [
+       "78651.6",
+       "0.02",
+       "2"
+      ]
+     ],
+     "asks": [
+      [
+       "78653.3",
+       "946.13",
+       "23"
+      ],
+      [
+       "78653.4",
+       "0.01",
+       "1"
+      ],
+      [
+       "78653.5",
+       "0.85",
+       "1"
+      ],
+      [
+       "78653.8",
+       "0.01",
+       "1"
+      ]
+     ],
+     "ts": "1788887855002"
+    }
+   ]
+  },
+  "okxInstruments": {
+   "code": "0",
+   "data": [
+    {
+     "instId": "BTC-USD-SWAP",
+     "ctVal": "100",
+     "ctMult": "1",
+     "ctType": "inverse",
+     "state": "live"
+    },
+    {
+     "instId": "BTC-USDT-SWAP",
+     "ctVal": "0.01",
+     "ctMult": "1",
+     "ctType": "linear",
+     "state": "live"
+    },
+    {
+     "instId": "ETH-USDT-SWAP",
+     "ctVal": "0.1",
+     "ctMult": "1",
+     "ctType": "linear",
+     "state": "live"
+    }
+   ]
+  },
+  "bitunixSpotDepth": {
+   "code": "0",
+   "msg": "result.success",
+   "data": {
+    "bids": [
+     {
+      "price": "78685.99",
+      "volume": "0.25561"
+     },
+     {
+      "price": "78685.52",
+      "volume": "0.23366"
+     },
+     {
+      "price": "78685.05",
+      "volume": "0.21316"
+     },
+     {
+      "price": "78684.57",
+      "volume": "0.30631"
+     }
+    ],
+    "asks": [
+     {
+      "price": "78686.00",
+      "volume": "0.31275"
+     },
+     {
+      "price": "78686.47",
+      "volume": "0.34168"
+     },
+     {
+      "price": "78686.94",
+      "volume": "0.26856"
+     },
+     {
+      "price": "78687.42",
+      "volume": "0.23506"
+     }
+    ]
+   },
+   "success": true
+  },
+  "lighterMarkets": {
+   "order_book_details": [
+    {
+     "symbol": "BTC",
+     "market_id": 1,
+     "status": "active",
+     "market_type": "perp",
+     "daily_quote_token_volume": 477533917.364411
+    }
+   ]
+  }
+ },
+ "_capturedAt": "2026-09-08T17:17:35.446Z"
 }

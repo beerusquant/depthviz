@@ -140,8 +140,12 @@ export default {
 
   open(market, s, opts, emit, status) {
     const snaps = LAYERS.map(() => null);
+    let closed = false;
 
     const publish = coalesce(() => {
+      // Six sockets close with six handshakes, so frames already in flight keep
+      // arriving after close(): a closed adapter must publish nothing.
+      if (closed) return;
       if (!snaps[0]) return; // the finest layer owns mid/spread; wait for it
       const bids = stitch(snaps.map((x) => x?.bids), true);
       const asks = stitch(snaps.map((x) => x?.asks), false);
@@ -187,6 +191,6 @@ export default {
       },
     }, { pingMs: 30_000, pingPayload: JSON.stringify({ method: 'ping' }) }));
 
-    return { close() { publish.cancel(); for (const c of conns) { try { c.close(); } catch {} } } };
+    return { close() { closed = true; publish.cancel(); for (const c of conns) { try { c.close(); } catch {} } } };
   },
 };

@@ -141,15 +141,35 @@ return { m1, m2, size, inverse, contracts: contracts === 'true', w,
 process.exit(0);
 `;
 
+// A child with no bound can hang the entire run, and this one did: on
+// 2026-09-08 a single venue's child sat for over an hour while the twelve
+// behind it waited, and the run produced no verdict at all. The worst case a
+// venue legitimately needs is reps x gap plus a fetch each — 15 x 8s is two
+// minutes — so five is generous and still finite. A killed child is reported as
+// "not judged", which already exits non-zero: an absent measurement was never a
+// passing one.
+const CHILD_TIMEOUT_MS = +process.env.DEPTHVIZ_CROSSCHECK_TIMEOUT_MS || 5 * 60_000;
+
 const run = (v) => new Promise((res) => {
   const reps = ri >= 0 ? REPS : Math.max(REPS, v.reps || 0);
   const args = [...v.ours, ...v.ccxt.map(String), String(!!v.contracts), SERVER, String(v.band ?? BAND), String(SETTLE_MS), String(reps), String(GAP_MS)];
   const p = spawn(process.execPath, ['--input-type=module', '-e', CHILD, '--', ...args],
     { cwd: process.env.CCXT_DIR || process.cwd(), stdio: ['ignore', 'pipe', 'pipe'] });
   let out = '', errOut = '';
+  let timedOut = false;
+  const timer = setTimeout(() => {
+    timedOut = true;
+    p.kill('SIGTERM');
+    setTimeout(() => { try { p.kill('SIGKILL'); } catch {} }, 3000).unref();
+  }, CHILD_TIMEOUT_MS);
   p.stdout.on('data', (d) => { out += d; });
   p.stderr.on('data', (d) => { errOut += d; });
   p.on('close', () => {
+    clearTimeout(timer);
+    if (timedOut) {
+      const t = CHILD_TIMEOUT_MS >= 60_000 ? `${(CHILD_TIMEOUT_MS / 60_000).toFixed(0)} min` : `${(CHILD_TIMEOUT_MS / 1000).toFixed(0)}s`;
+      return res({ err: `no result after ${t} — child killed` });
+    }
     try { res(JSON.parse(out.trim().split('\n').pop())); }
     catch { res({ err: `child produced no result: ${(errOut.trim().split('\n').pop() || 'no stderr').slice(0, 110)}` }); }
   });

@@ -15,8 +15,15 @@ const instType = (m) => (m === 'perp' ? 'SWAP' : 'SPOT');
 // anything short of a catastrophe. 3% is thirty times the p95 and still five
 // times tighter, and three CONSECUTIVE readings past it is a state no spike in
 // that sample ever produced.
-const DRIFT_TOLERANCE = 0.03;   // cumulative-size disagreement over the overlap
-const DRIFT_BREACHES = 3;       // consecutive breaches before forcing a resync
+// Exported so tools/measure-drift.mjs judges the number that is actually in
+// force rather than a copy of it that can rot: a threshold quoted in one file
+// and used in another is a threshold nobody is checking.
+export const DRIFT_TOLERANCE = 0.03;   // cumulative-size disagreement over the overlap
+export const DRIFT_BREACHES = 3;       // consecutive breaches before forcing a resync
+// What the sample above has to keep being true for the tolerance to stand: 3%
+// was chosen as ~32x the measured p95. Anything under 20x means the venue has
+// moved and the number needs re-deriving, not widening.
+export const DRIFT_P95_FACTOR = 20;
 
 /**
  * A SWAP instrument's contract spec, and the function that applies it.
@@ -108,6 +115,10 @@ export default {
     let stopped = false;
     let drift = null;        // last measured ws-vs-rest disagreement over the overlap
     let breaches = 0;
+    // Held so close() can clear it. A flag alone stops the NEXT poll but leaves
+    // the pending one holding the event loop, which is a second of shutdown per
+    // feed for a response that will be thrown away.
+    let pollTimer = null;
 
     const tailOf = (rows, ascending) => {
       const out = [];
@@ -167,12 +178,12 @@ export default {
           } else breaches = 0;
         }
       } catch { /* keep the previous tail; the ws book is unaffected */ }
-      if (!stopped) setTimeout(pollFull, 1000);
+      if (!stopped) pollTimer = setTimeout(pollFull, 1000);
     };
 
     // Every update is applied immediately; the merge with the polled tail and
     // the two sorts it needs run only on the frames that are shipped.
-    const publish = coalesce((ts) => emit({
+    const publish = coalesce((ts) => stopped || emit({
       bids: merge(bids.toArray(), tailBids, (p, e) => p < e),
       asks: merge(asks.toArray(), tailAsks, (p, e) => p > e),
       ts, source: 'ws', drift,
@@ -220,6 +231,6 @@ export default {
     // zone waiting for someone to add an early return.
     pollFull();
 
-    return { close() { stopped = true; publish.cancel(); conn.close(); } };
+    return { close() { stopped = true; clearTimeout(pollTimer); publish.cancel(); conn.close(); } };
   },
 };

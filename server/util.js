@@ -344,3 +344,41 @@ export function watchdogFallback(ms, startFallback) {
     close() { closed = true; clearTimeout(timer); if (fb) { try { fb.close(); } catch {} fb = null; } },
   };
 }
+
+/**
+ * A token bucket, keyed, with the clock injected so it can be tested.
+ *
+ * Both public routes that take a symbol open upstream connections to an
+ * exchange from this host's IP — `/api/depth` opens a feed, `/api/symbols`
+ * fetches a listing — so an unthrottled caller cycling a symbol list spends
+ * somebody else's rate-limit budget as fast as it can loop. The global feed cap
+ * bounds how many connections exist at once; it does nothing about how fast
+ * they are churned.
+ *
+ * `capacity` is the burst a normal user needs (flipping through venues fires a
+ * handful of calls in a second), `refillPerSec` is the sustained rate. `take`
+ * returns null when allowed and the seconds to wait when it is not, so the
+ * caller can put a real number in `Retry-After` rather than a guess.
+ */
+export function tokenBucket(capacity, refillPerSec) {
+  const buckets = new Map(); // key -> { tokens, t }
+  return {
+    take(key, now = Date.now()) {
+      let b = buckets.get(key);
+      if (!b) { b = { tokens: capacity, t: now }; buckets.set(key, b); }
+      b.tokens = Math.min(capacity, b.tokens + ((now - b.t) / 1000) * refillPerSec);
+      b.t = now;
+      if (b.tokens >= 1) { b.tokens -= 1; return null; }
+      return (1 - b.tokens) / refillPerSec;
+    },
+    // Keys are remote addresses, so the map is attacker-growable: drop the ones
+    // that have been full (i.e. idle) for long enough that forgetting them
+    // changes nothing.
+    sweep(now = Date.now()) {
+      const idle = (capacity / refillPerSec) * 1000;
+      for (const [k, b] of buckets) if (now - b.t > idle) buckets.delete(k);
+      return buckets.size;
+    },
+    get size() { return buckets.size; },
+  };
+}

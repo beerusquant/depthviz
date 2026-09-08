@@ -59,6 +59,9 @@ export default {
       style: 'prev',
       decode: decodeDepthUpdate,
       snapshot: () => fetchDepthSnapshot(REST, DEPTH(s)),
+      // The transport seam the tests drive. Production never sets it: the hub
+      // only ever builds `opts` as { range }.
+      connect: opts?.connect,
     }, emit, status);
   },
 };

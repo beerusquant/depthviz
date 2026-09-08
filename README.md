@@ -100,7 +100,7 @@ curl 'http://127.0.0.1:8787/api/depth?exchange=okx&market=perp&symbol=BTC-USDT-S
 ```json
 {
   "exchange": "okx", "market": "perp", "symbol": "BTC-USDT-SWAP", "range": 0.5,
-  "transport": "ws",
+  "transport": "ws", "metricsFrom": "shipped",
   "tsVenue": 1788428919609, "tsRecv": 1788428919707,
   "ageMs": 19, "venueLatencyMs": 98,
   "levels": [5003, 5009],
@@ -119,12 +119,21 @@ standing in for one. `tsRecv` is when the frame reached this process, so
 `ageMs` is staleness. `reach` says how far the venue's book actually went, so a
 caller can tell a thin book from a truncated one without reading the chart.
 
+**The levels, when you need them.** `&levels=raw` returns the venue's own price
+levels inside the range, in base units, and computes the figures from them;
+`&levels=trimmed` returns the reduced `[vwapPrice, summedQty]` rows the browser
+gets. The reduction is exact in cumulative notional, quantity and VWAP at ±2%,
+±5% and ±10%, and interpolates between bucket edges — so *"what price does 40
+BTC walk to"* is answerable only from the raw book. Which one the figures came
+from is stated in `metricsFrom` rather than left to be worked out.
+
 | route | |
 |---|---|
-| `GET /api/depth?exchange&market&symbol&range` | one depth reading as JSON (above) |
+| `GET /api/depth?exchange&market&symbol&range[&levels=raw\|trimmed]` | one depth reading as JSON (above) |
 | `GET /api/symbols?exchange&market` | the venue's live instrument list |
 | `GET /api/catalog` | venues, markets and transports |
-| `GET /api/feeds` | per-feed health: book age, venue latency, reconnects, errors, dropped frames |
+| `GET /api/feeds[?history=1]` | per-feed health: book age, venue latency, reconnects, errors, dropped frames, and the last hour of samples behind them |
+| `GET /metrics` | the same facts as a Prometheus exposition, for something that never sleeps |
 | `WS /ws` | the streaming book the page itself uses |
 
 On SIGTERM the process closes every upstream socket before exiting: systemd
@@ -133,9 +142,16 @@ IP until they time out, and a restart loop stacks them.
 
 `/api/depth` joins the same upstream feed a viewer would, and a feed with no
 viewers is kept warm for 30 s — polling it does not reopen an exchange
-connection every call. The process holds at most 48 live feeds
-(`DEPTHVIZ_MAX_FEEDS`): there is no authentication here, and every distinct
-symbol somebody opens spends this host's rate-limit budget at an exchange.
+connection every call. There is no authentication here and every distinct symbol
+somebody opens spends this host's rate-limit budget at an exchange, so four
+ceilings bound what one visitor can cost: 48 live feeds for the whole process
+(`DEPTHVIZ_MAX_FEEDS`), **12 per client** (`DEPTHVIZ_MAX_FEEDS_PER_CLIENT`, so
+one caller cannot take every slot and refuse everybody else), 24 websocket
+connections per address (`DEPTHVIZ_MAX_SOCKETS_PER_IP`), and a token bucket on
+the two routes that reach an exchange. A refusal is a `429` with a real
+`Retry-After`, never a `504` — this server saying no is not the venue being
+unwell. Behind a reverse proxy set `DEPTHVIZ_TRUST_PROXY=1`, or every caller
+shares one budget.
 
 ## Layout
 
@@ -143,10 +159,13 @@ symbol somebody opens spends this host's rate-limit budget at an exchange.
 server/index.js     HTTP, websocket and the JSON API
 server/hub.js       fan-out, payload reduction, feed lifecycle and health
 server/util.js      reconnecting sockets, publish coalescing, the book side, the protobuf reader
+server/quota.js     what one client may hold — kept out of the thing that opens sockets, so it is testable
+server/health.js    the sample ring behind /api/feeds and the Prometheus exposition
 server/adapters/    one file per venue + diff-book.js, the engine five feeds share
 shared/metrics.js   every number on screen and in /api/depth — one implementation
 public/             the page: ES modules and canvas, no build step
 tools/              the proofs: unit tests, recorded venue fixtures, live verifiers, smoke tests
+tools/record.mjs    the tape: raw books to JSONL, so a threshold can be re-derived rather than believed
 docs/               the long-form documentation
 deploy/             systemd units, the hourly check timer, the macOS launcher
 ```
@@ -158,10 +177,25 @@ that crashes, because it does not announce itself — a missed contract multipli
 is a 100x error and the curve stays pretty. So the checks are the point:
 
 ```bash
-npm test                # 52 assertions over the four pure cores, no network
+npm test                # 400 assertions, no network: the pure cores, every venue's
+                        # recorded frames, and one lifecycle contract applied to all 13 feeds
 npm run crosscheck      # ccxt as an independent second opinion (server must be up)
+npm run measure:drift   # re-derive the distributions the drift thresholds came from
 npm run checks          # every proof in one run, for a timer; non-zero if any fails
 ```
+
+A recording is how a measurement is made twice:
+
+```bash
+npm run record -- --exchange binance --market spot --symbol BTCUSDT --minutes 20 --gzip
+npm run replay -- data/binance-spot-BTCUSDT-*.jsonl.gz          # distributions, gaps, coverage
+npm run replay -- data/binance-spot-BTCUSDT-*.jsonl.gz --csv    # the series, for anything else
+```
+
+It records the **raw** book, not the reduced one, and writes `.part` until the
+run finishes: a partial JSONL is byte-for-byte plausible, and a loop that
+concluded from a file's size that a capture had succeeded has cost this repo
+half an hour once already.
 
 [**docs/verification.md**](docs/verification.md) is the long version: what each
 suite pins, what CI deliberately refuses to run, how the Hyperliquid stitch was

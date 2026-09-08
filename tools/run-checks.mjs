@@ -29,21 +29,56 @@ const CHECKS = [
   ['book tests',      ['tools/test-book.mjs']],
   ['diff-book tests', ['tools/test-diff-book.mjs']],
   ['adapter tests',   ['tools/test-adapters.mjs']],
+  ['conformance',     ['tools/test-conformance.mjs']],
   ['reconnect tests', ['tools/test-reconnect.mjs']],
   ['stitch tests',    ['tools/test-stitch.mjs']],
   ['trim tests',      ['tools/test-trim.mjs']],
   ['metrics tests',   ['tools/test-metrics.mjs']],
+  ['limit tests',     ['tools/test-limits.mjs']],
+  ['health tests',    ['tools/test-health.mjs']],
+  ['recording tests', ['tools/test-recording.mjs']],
   ['ccxt crosscheck', ['tools/crosscheck-ccxt.mjs']],
   ['bitunix',         ['tools/verify-bitunix.mjs']],
   ['hyperliquid',     ['tools/verify-hyperliquid.mjs']],
+  // Not a test of the code: a re-derivation of the distributions two thresholds
+  // were set from. It runs WITHOUT --check on purpose, and three minutes is
+  // deliberately too short to gate on — a p95 over ~180 readings is the ninth
+  // largest of them, and the tool reports INCONC rather than judging on it.
+  // What this buys is the archive nobody had: one distribution per hour in
+  // logs/measurements/, so the next threshold argument has a sample behind it
+  // instead of an afternoon's anecdote. Re-derive deliberately with
+  // `npm run measure:drift -- --check`, which defaults to fifteen minutes.
+  ['drift distribution', ['tools/measure-drift.mjs', '--minutes', '3']],
 ];
+
+// A check that never returns is worse than one that fails: it produces no
+// verdict, no log line and no exit code, and the hourly unit sits there until
+// systemd's TimeoutStartSec kills it silently half an hour later. Observed on
+// 2026-09-08 — the ccxt crosscheck spawns a child per venue with no bound of
+// its own, and one of them hung for over an hour while every other check waited
+// behind it. A timeout that reports is the whole point.
+const TIMEOUT_MS = +process.env.DEPTHVIZ_CHECK_TIMEOUT_MS || 15 * 60_000;
 
 const run = (args) => new Promise((res) => {
   const p = spawn(process.execPath, args, { cwd: root, stdio: ['ignore', 'pipe', 'pipe'] });
   let out = '';
+  let timedOut = false;
+  const timer = setTimeout(() => {
+    timedOut = true;
+    p.kill('SIGTERM');
+    // A child ignoring SIGTERM is exactly the child this exists for.
+    setTimeout(() => { try { p.kill('SIGKILL'); } catch {} }, 5000).unref();
+  }, TIMEOUT_MS);
   p.stdout.on('data', (d) => { out += d; });
   p.stderr.on('data', (d) => { out += d; });
-  p.on('close', (code) => res({ code, out }));
+  p.on('close', (code) => {
+    clearTimeout(timer);
+    if (timedOut) {
+      out += `\n[run-checks] killed after ${(TIMEOUT_MS / 60_000).toFixed(0)} min — a check that never reports is not a pass\n`;
+      return res({ code: 124, out });
+    }
+    res({ code, out });
+  });
 });
 
 const started = new Date();
