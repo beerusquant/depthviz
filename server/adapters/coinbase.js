@@ -1,4 +1,4 @@
-import { fetchJson, ttlCache, reconnectingWs, BookSide } from '../util.js';
+import { fetchJson, ttlCache, reconnectingWs, BookSide, coalesce, PUBLISH_MS } from '../util.js';
 
 const REST = 'https://api.exchange.coinbase.com';
 const WS = 'wss://ws-feed.exchange.coinbase.com';
@@ -10,8 +10,8 @@ const products = ttlCache(async () => {
 
 const stats = ttlCache(async (id) => {
   const [s, t] = await Promise.all([
-    fetchJson(`${REST}/products/${id}/stats`),
-    fetchJson(`${REST}/products/${id}/ticker`),
+    fetchJson(`${REST}/products/${encodeURIComponent(id)}/stats`),
+    fetchJson(`${REST}/products/${encodeURIComponent(id)}/ticker`),
   ]);
   const v = +s.volume * +t.price;
   return isFinite(v) ? v : null;
@@ -39,9 +39,9 @@ export default {
     const asks = new BookSide(false);
     let ready = false;
 
-    const publish = (ts) => emit({ bids: bids.toArray(), asks: asks.toArray(), ts, source: 'ws' });
+    const publish = coalesce((ts) => emit({ bids: bids.toArray(), asks: asks.toArray(), ts, source: 'ws' }), PUBLISH_MS);
 
-    return reconnectingWs(WS, {
+    const conn = reconnectingWs(WS, {
       onOpen: (send) => {
         ready = false; bids.clear(); asks.clear();
         send({ type: 'subscribe', product_ids: [s], channels: ['level2_batch'] });
@@ -61,6 +61,7 @@ export default {
         }
       },
       onStatus: status,
-    });
+    }, { pingMs: 20_000 });
+    return { close() { publish.cancel(); conn.close(); } };
   },
 };

@@ -51,10 +51,22 @@ they are quoted at the reach a settled feed holds, not at the REST limit.
 
 ## Metrics
 
-Mid, spread %, 24h volume, bid/ask VWAP with % distance from mid, bid/ask
+Mid, spread in basis points, 24h volume, bid/ask VWAP with % distance from mid, bid/ask
 cumulative depth inside the range, depth at ±2% and ±5%, total depth, and
-OFI = (bidDepth − askDepth) / (bidDepth + askDepth), labelled BID-heavy /
-ASK-heavy outside ±0.15 with the raw number always shown.
+depth imbalance = (bidDepth − askDepth) / (bidDepth + askDepth), labelled
+BID-heavy / ASK-heavy outside ±0.15 with the raw number always shown.
+
+The spread is quoted in **bps, not per cent**: one tick on BTC/USDT is
+0.0000127%, which the panel used to render as `0.0000%` — the most important
+number on screen displayed as zero. Basis points are the unit it is quoted in
+and they are scale-free across a \$78 000 instrument and a \$0.0004 one.
+
+Every band-scoped figure carries its band in its own label (`Bid Depth (±2%)`,
+`Imbalance (±2%)`): a depth without the band it was measured over is not a
+number anyone can act on. The imbalance is deliberately **not** called OFI —
+order-flow imbalance is built from *changes* in the book between two instants,
+and this is resting depth at one instant. Same arithmetic, different quantity,
+and the name mattered to the people most likely to trade on it.
 
 ## Controls
 
@@ -95,7 +107,7 @@ curl 'http://127.0.0.1:8787/api/depth?exchange=okx&market=perp&symbol=BTC-USDT-S
   "mid": 77651.55, "spreadPct": 0.000128,
   "bidDepth": 73619225.45, "askDepth": 102498614.87,
   "depthPlus2": 138519919.64, "depthMinus2": 96704574.43,
-  "ofi": -0.1639, "ofiLabel": "ASK-heavy",
+  "imbalance": -0.1639, "imbalanceLabel": "ASK-heavy",
   "reach": { "bid": 0.9105, "ask": 0.9548, "shortBid": false, "shortAsk": false }
 }
 ```
@@ -117,14 +129,16 @@ caller can tell a thin book from a truncated one without reading the chart.
 
 `/api/depth` joins the same upstream feed a viewer would, and a feed with no
 viewers is kept warm for 30 s — polling it does not reopen an exchange
-connection every call.
+connection every call. The process holds at most 48 live feeds
+(`DEPTHVIZ_MAX_FEEDS`): there is no authentication here, and every distinct
+symbol somebody opens spends this host's rate-limit budget at an exchange.
 
 ## Layout
 
 ```
 server/index.js     HTTP, websocket and the JSON API
 server/hub.js       fan-out, payload reduction, feed lifecycle and health
-server/util.js      reconnecting sockets, the book side, the protobuf reader
+server/util.js      reconnecting sockets, publish coalescing, the book side, the protobuf reader
 server/adapters/    one file per venue + diff-book.js, the engine five feeds share
 shared/metrics.js   every number on screen and in /api/depth — one implementation
 public/             the page: ES modules and canvas, no build step

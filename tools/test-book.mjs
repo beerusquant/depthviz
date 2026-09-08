@@ -3,7 +3,7 @@
  * whether the accumulated deep tail survives. No network.
  *   node tools/test-book.mjs
  */
-import { BookSide } from '../server/util.js';
+import { BookSide, coalesce } from '../server/util.js';
 
 let pass = 0, fail = 0;
 const eq = (name, got, want) => {
@@ -70,6 +70,39 @@ console.log('BookSide.applySnapshot');
   b.set(90, 5, t0); b.set(100, 1, t0);
   b.applySnapshot([[100, 2]]);                                  // 90 survives at t0
   eq('a kept level does not have its age reset', b.applySnapshot([[100, 3]], { maxAgeMs: 3 * 60_000 }), 0);
+}
+
+// ---------------------------------------------------------------- coalesce
+console.log('\ncoalesce');
+{
+  const seen = [];
+  const c = coalesce((x) => seen.push(x), 40);
+  c('a');                       // leading edge runs at once
+  c('b'); c('c'); c('d');       // collapsed into one trailing call
+  eq('the first call is not delayed', seen, ['a']);
+  await new Promise((r) => setTimeout(r, 90));
+  // The trailing call must carry the LAST arguments, not the first ones it
+  // queued: a book frame's venue timestamp travels with it, and pairing a fresh
+  // book with an older clock would report a latency the feed never had.
+  eq('the trailing call carries the newest arguments', seen, ['a', 'd']);
+  c.cancel();
+}
+{
+  const seen = [];
+  const c = coalesce((x) => seen.push(x), 40);
+  c('a'); c('b');
+  c.cancel();
+  await new Promise((r) => setTimeout(r, 90));
+  eq('cancel drops the pending call', seen, ['a']);
+}
+{
+  const seen = [];
+  const c = coalesce((x) => seen.push(x), 40);
+  c('a');
+  await new Promise((r) => setTimeout(r, 90));
+  c('b');
+  eq('a call after the window is immediate again', seen, ['a', 'b']);
+  c.cancel();
 }
 
 console.log(`\n${pass} passed, ${fail} failed`);

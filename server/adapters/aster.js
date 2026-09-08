@@ -16,7 +16,7 @@ const REST = 'https://fapi.asterdex.com';
 // 1000 is the venue's ceiling — limit=5000 is rejected with -1130. That is
 // about ±2.7% of mid on BTC, so anything past it is accumulated from diffs,
 // exactly like Binance perp.
-const DEPTH = (s) => `/fapi/v1/depth?symbol=${s}&limit=1000`;
+const DEPTH = (s) => `/fapi/v1/depth?symbol=${encodeURIComponent(s)}&limit=1000`;
 
 const info = ttlCache(async () => {
   const j = await fetchJson(`${REST}/fapi/v1/exchangeInfo`);
@@ -55,7 +55,7 @@ export default {
   open(market, s, opts, emit, status) {
     return openDiffBook({
       label: 'Aster',
-      ws: `wss://fstream.asterdex.com/ws/${s.toLowerCase()}@depth@100ms`,
+      ws: `wss://fstream.asterdex.com/ws/${encodeURIComponent(s.toLowerCase())}@depth@100ms`,
       style: 'prev',
       decode: decodeDepthUpdate,
       snapshot: () => fetchDepthSnapshot(REST, DEPTH(s)),

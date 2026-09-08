@@ -51,7 +51,7 @@ app.get('/api/symbols', async (req, res) => {
  */
 app.get('/api/depth', async (req, res) => {
   const { exchange, market, symbol } = req.query;
-  const range = +req.query.range || 2;
+  const range = Math.min(50, Math.max(0.01, +req.query.range || 2));
   const ad = adapters[exchange];
   if (!ad) return res.status(404).json({ error: `unknown exchange ${exchange}` });
   if (!ad.markets.includes(market)) return res.status(400).json({ error: `${ad.name} has no ${market} market` });
@@ -82,7 +82,9 @@ app.get('/api/depth', async (req, res) => {
       bidDepth: m.bidDepth, askDepth: m.askDepth, totalDepth: m.totalDepth,
       depthPlus2: m.depthPlus2, depthMinus2: m.depthMinus2,
       depthPlus5: m.depthPlus5, depthMinus5: m.depthMinus5,
-      ofi: m.ofi, ofiLabel: m.ofiLabel,
+      // Resting-depth imbalance over ±range. Named for what it measures: it is
+      // not order-flow imbalance, which is built from changes in the book.
+      imbalance: m.imbalance, imbalanceLabel: m.imbalanceLabel,
       // The book stopping inside the requested range is a property of the
       // venue, not an error, but a caller integrating this must be able to see
       // it without reading the chart.
@@ -91,6 +93,16 @@ app.get('/api/depth', async (req, res) => {
   } catch (e) {
     res.status(504).json({ error: e.message });
   }
+});
+
+// One venue answering with malformed JSON at three in the morning must not take
+// the other twelve feeds down with it. Node's default is to kill the process on
+// an unhandled rejection, and under systemd that becomes a restart loop in which
+// every feed reconnects and re-fetches — the exchanges get hit hardest exactly
+// when something is already wrong. Log it and keep serving; the feed that raised
+// it will show up in /api/feeds with a stale `ageMs` either way.
+process.on('unhandledRejection', (err) => {
+  console.error(`[unhandled] ${err?.stack || err}`);
 });
 
 const server = http.createServer(app);

@@ -109,5 +109,31 @@ for (let i = 1; i <= 200; i++) bids.push([MID * (0.94 - i * 0.00025), 5]); // -6
   ok('an empty side stays empty', trim([], MID).length === 0);
 }
 
+// ------------------------------------------------------- report boundaries
+// A bucket that straddles ±2% (or ±5%, or ±10%) is counted whole or dropped
+// whole, depending on which side of the line its VWAP price fell — so a figure
+// published as fact was wrong by up to one bucket. On a book decaying at a
+// realistic rate that overstated the ±2% depth by 0.51%.
+{
+  const mid = 78_000;
+  const rows = [];
+  for (let i = 1; i <= 400_000; i++) {
+    const p = mid + i * 0.05;
+    const d = (p / mid - 1) * 100;
+    if (d > 12) break;
+    rows.push([p, 0.02 * Math.exp(-d * 0.6)]);
+  }
+  const cum = (t, lim) => t.filter(([p]) => (p / mid - 1) * 100 <= lim + 1e-12)
+    .reduce((s, [p, q]) => s + p * q, 0);
+  const t = trim(rows, mid);
+  for (const lim of [2, 5, 10]) {
+    const truth = cum(rows, lim);
+    const got = cum(t, lim);
+    ok(`cumulative notional at +${lim}% survives the reduction exactly`,
+       Math.abs(got / truth - 1) < 1e-12,
+       `truth ${truth.toFixed(2)} got ${got.toFixed(2)} (${((got / truth - 1) * 100).toFixed(4)}%)`);
+  }
+}
+
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);

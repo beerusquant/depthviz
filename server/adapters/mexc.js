@@ -84,7 +84,7 @@ const spotBook = (s) => ({
     return decodeSpotDepth(raw);
   },
   snapshot: async () => {
-    const snap = await fetchJson(`${SPOT}/api/v3/depth?symbol=${s}&limit=5000`);
+    const snap = await fetchJson(`${SPOT}/api/v3/depth?symbol=${encodeURIComponent(s)}&limit=5000`);
     return {
       bids: snap.bids.map((r) => [+r[0], +r[1]]),
       asks: snap.asks.map((r) => [+r[0], +r[1]]),
@@ -114,7 +114,7 @@ const perpBook = (s, cs) => ({
     };
   },
   snapshot: async () => {
-    const j = await fetchJson(`${FUT}/api/v1/contract/depth/${s}`);
+    const j = await fetchJson(`${FUT}/api/v1/contract/depth/${encodeURIComponent(s)}`);
     const d = j.data || {};
     return {
       bids: (d.bids || []).map((r) => [+r[0], +r[1] * cs]),
@@ -129,10 +129,10 @@ const perpBook = (s, cs) => ({
 function pollBook(market, s, cs, emit, status) {
   return poller(async () => {
     if (market === 'spot') {
-      const j = await fetchJson(`${SPOT}/api/v3/depth?symbol=${s}&limit=5000`);
+      const j = await fetchJson(`${SPOT}/api/v3/depth?symbol=${encodeURIComponent(s)}&limit=5000`);
       emit({ bids: j.bids.map((r) => [+r[0], +r[1]]), asks: j.asks.map((r) => [+r[0], +r[1]]), ts: null, source: 'poll' });
     } else {
-      const j = await fetchJson(`${FUT}/api/v1/contract/depth/${s}`);
+      const j = await fetchJson(`${FUT}/api/v1/contract/depth/${encodeURIComponent(s)}`);
       const d = j.data || {};
       emit({
         bids: (d.bids || []).map((r) => [+r[0], +r[1] * cs]),

@@ -1,4 +1,4 @@
-import { fetchJson, ttlCache, reconnectingWs, BookSide } from '../util.js';
+import { fetchJson, ttlCache, reconnectingWs, BookSide, coalesce, PUBLISH_MS } from '../util.js';
 
 const REST = 'https://www.okx.com';
 const WS = 'wss://ws.okx.com:8443/ws/v5/public';
@@ -120,7 +120,7 @@ export default {
     const pollFull = async () => {
       if (stopped) return;
       try {
-        const j = await fetchJson(`${REST}/api/v5/market/books-full?instId=${s}&sz=5000`);
+        const j = await fetchJson(`${REST}/api/v5/market/books-full?instId=${encodeURIComponent(s)}&sz=5000`);
         const d = j.code === '0' ? j.data?.[0] : null;
         if (d) {
           tailBids = tailOf(d.bids || [], false);
@@ -144,6 +144,14 @@ export default {
       } catch { /* keep the previous tail; the ws book is unaffected */ }
       if (!stopped) setTimeout(pollFull, 1000);
     };
+
+    // Every update is applied immediately; the merge with the polled tail and
+    // the two sorts it needs run only on the frames that are shipped.
+    const publish = coalesce((ts) => emit({
+      bids: merge(bids.toArray(), tailBids, (p, e) => p < e),
+      asks: merge(asks.toArray(), tailAsks, (p, e) => p > e),
+      ts, source: 'ws', drift,
+    }), PUBLISH_MS);
 
     const conn = reconnectingWs(WS, {
       onOpen: (send) => {
@@ -170,13 +178,7 @@ export default {
           apply(bids, d.bids || []);
           apply(asks, d.asks || []);
           seq = +d.seqId;
-          emit({
-            bids: merge(bids.toArray(), tailBids, (p, e) => p < e),
-            asks: merge(asks.toArray(), tailAsks, (p, e) => p > e),
-            ts: Number.isFinite(+d.ts) ? +d.ts : null,
-            source: 'ws',
-            drift,
-          });
+          publish(Number.isFinite(+d.ts) ? +d.ts : null);
         }
       },
       onStatus: status,
@@ -189,6 +191,6 @@ export default {
     // zone waiting for someone to add an early return.
     pollFull();
 
-    return { close() { stopped = true; conn.close(); } };
+    return { close() { stopped = true; publish.cancel(); conn.close(); } };
   },
 };

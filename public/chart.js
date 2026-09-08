@@ -288,11 +288,11 @@ function drawLegend(ctx, T, right, yy) {
 // The rows a trader cannot read off the curve itself. Everything dropped here
 // (the ±2%/±5% depths, total depth, the exchange line) is still in the COPY
 // payload — the panel is shortened, the data is not.
-const COMPACT_ROWS = new Set(['Symbol', 'Mid Price', 'Spread', 'Bid Depth', 'Ask Depth', 'OFI', 'Book Age']);
+const COMPACT_ROWS = new Set(['symbol', 'mid', 'spread', 'bidDepth', 'askDepth', 'imbalance', 'age']);
 
 function drawPanel(ctx, T, px, py, m, meta, L) {
   const all = panelRows(m, meta);
-  const rows = L.compactPanel ? all.filter(([l]) => COMPACT_ROWS.has(l)) : all;
+  const rows = L.compactPanel ? all.filter(([, , , key]) => COMPACT_ROWS.has(key)) : all;
   ctx.font = `${L.tiny ? 9 : L.narrow ? 10 : 11}px ui-monospace, Menlo, monospace`;
   const lh = L.tiny ? 11.5 : L.narrow ? 12.5 : 13.5;
   let labelW = 0, valW = 0;

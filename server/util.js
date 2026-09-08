@@ -2,6 +2,12 @@ import WebSocket from 'ws';
 
 const UA = { 'User-Agent': 'depthviz/1.0', 'Accept': 'application/json' };
 
+// How often a feed is allowed to publish a book. One number, used by the
+// adapters to coalesce upstream frames and by the hub to throttle fan-out, so
+// the two cannot fight: an adapter publishing faster than the hub ships is pure
+// waste, and an adapter publishing slower makes the hub's throttle a lie.
+export const PUBLISH_MS = 200;
+
 export async function fetchJson(url, opts = {}) {
   const ctl = new AbortController();
   const t = setTimeout(() => ctl.abort(), opts.timeout || 12000);
@@ -52,6 +58,41 @@ export function ttlCache(fn, ttlMs) {
   };
 }
 
+/**
+ * Rate-limit a publish to at most one call per `ms`, keeping the LAST arguments.
+ *
+ * An order book is a snapshot, not a log: when frames arrive faster than they
+ * can be shipped, the right thing is to drop the intermediate ones, and the
+ * cheapest place to drop them is before the expensive part. The adapters used
+ * to sort and serialise the whole book on every upstream frame — Binance pushes
+ * one every 100 ms — and the hub then threw ~95% of that away at its own 200 ms
+ * throttle. Measured on a 20 000-level side: 2.2 ms to sort both sides plus
+ * 1.3 ms to bucket them, i.e. 35 ms of event-loop time per second per feed,
+ * nearly all of it discarded.
+ *
+ * The trailing call runs with the arguments of the most recent invocation, and
+ * no upstream frame can land between that invocation and the timer without
+ * itself becoming a new invocation — so the venue timestamp passed in always
+ * belongs to the last event actually applied to the book. Coalescing must never
+ * pair a fresh book with a stale clock.
+ */
+export function coalesce(fn, ms) {
+  let last = 0, timer = null, args = null;
+  const call = (...a) => {
+    args = a;
+    if (timer) return;
+    const wait = ms - (Date.now() - last);
+    if (wait <= 0) { last = Date.now(); const x = args; args = null; fn(...x); return; }
+    timer = setTimeout(() => {
+      timer = null; last = Date.now();
+      const x = args; args = null;
+      if (x) fn(...x);
+    }, wait);
+  };
+  call.cancel = () => { clearTimeout(timer); timer = null; args = null; };
+  return call;
+}
+
 /** Repeatedly run `tick` every intervalMs until closed. Never overlaps. */
 export function poller(tick, intervalMs, onError) {
   let stopped = false;
@@ -77,12 +118,24 @@ export function poller(tick, intervalMs, onError) {
 /**
  * WebSocket with automatic reconnect + exponential backoff.
  * handlers: { onOpen(send), onMessage(data, send), onStatus(state, detail) }
+ *
+ * `opts.pingMs` also arms a liveness deadline. A socket that dies without a
+ * FIN — a NAT table entry expiring, a load balancer dropping the flow — stays
+ * `readyState === OPEN` forever: no error, no close, no data. The feed then
+ * reads `live` and serves a book frozen at the instant the path broke, which is
+ * the one failure mode this tool must never have. Anything inbound (a frame, a
+ * pong, a protocol ping) proves the path; going `IDLE_FACTOR` ping intervals
+ * without any of it does not, so the socket is destroyed and the normal
+ * reconnect path takes over.
  */
+const IDLE_FACTOR = 2.5;
+
 export function reconnectingWs(url, handlers, opts = {}) {
   let ws = null;
   let closed = false;
   let attempt = 0;
   let pingTimer = null;
+  let idleTimer = null;
 
   const send = (obj) => {
     if (ws && ws.readyState === WebSocket.OPEN) {
@@ -90,13 +143,26 @@ export function reconnectingWs(url, handlers, opts = {}) {
     }
   };
 
+  const clearTimers = () => { clearInterval(pingTimer); clearTimeout(idleTimer); };
+
   const connect = () => {
     if (closed) return;
+    const alive = () => {
+      if (!opts.pingMs || closed) return;
+      clearTimeout(idleTimer);
+      const sock = ws;
+      idleTimer = setTimeout(() => {
+        if (closed || sock !== ws) return;
+        handlers.onStatus?.('reconnecting', `${new URL(url).host}: no data for ${Math.round(opts.pingMs * IDLE_FACTOR / 1000)}s, socket assumed dead`);
+        try { sock.terminate(); } catch { try { sock.close(); } catch {} }
+      }, opts.pingMs * IDLE_FACTOR);
+    };
     handlers.onStatus?.(attempt === 0 ? 'connecting' : 'reconnecting');
     ws = new WebSocket(url, opts.wsOptions);
 
     ws.on('open', () => {
       attempt = 0;
+      alive();
       handlers.onStatus?.('open');
       try { handlers.onOpen?.(send); } catch (e) { handlers.onStatus?.('error', String(e)); }
       if (opts.pingMs) {
@@ -111,14 +177,17 @@ export function reconnectingWs(url, handlers, opts = {}) {
     });
 
     ws.on('message', (raw) => {
+      alive();
       try { handlers.onMessage?.(raw, send); }
       catch (e) { handlers.onStatus?.('error', String(e)); }
     });
+    ws.on('pong', alive);
+    ws.on('ping', alive);
 
     ws.on('error', (e) => handlers.onStatus?.('error', e?.message || String(e)));
 
     ws.on('close', () => {
-      clearInterval(pingTimer);
+      clearTimers();
       if (closed) return;
       const delay = Math.min(30000, 500 * 2 ** attempt) + Math.random() * 400;
       attempt += 1;
@@ -133,7 +202,7 @@ export function reconnectingWs(url, handlers, opts = {}) {
     send,
     close() {
       closed = true;
-      clearInterval(pingTimer);
+      clearTimers();
       try { ws?.close(); } catch {}
     },
   };
@@ -198,6 +267,34 @@ export class BookSide {
   }
   get size() { return this.m.size; }
 }
+
+/**
+ * Is this string safe to carry as a symbol?
+ *
+ * A symbol is chosen by the caller and ends up inside an exchange REST URL — in
+ * a query string on most venues, in a PATH SEGMENT on MEXC futures and Coinbase.
+ * Unescaped, `BTC_USDT?limit=1&x=` appends parameters to somebody else's request
+ * and `../../` walks to another endpoint entirely, from a process with no
+ * authentication in front of it. The fix for that is `encodeURIComponent` at
+ * every site that builds a URL, which is where it now lives; this is the cheap
+ * outer guard, and it is deliberately permissive.
+ *
+ * It has to be. A charset allowlist was the obvious first answer and it was
+ * wrong: checked against the live listings of all eight venues, 31 of the 10 358
+ * symbols served today fail any reasonable one — `币安人生USDT` and four more CJK
+ * meme tokens on Binance and Aster, sixteen `GOLD(PAXG)USDT`-style names on MEXC,
+ * and Hyperliquid's `PURR/USDC`, whose slash is exactly the character a URL guard
+ * wants to ban and which never reaches a URL on that venue (Hyperliquid takes its
+ * symbols in a JSON body). Rejecting a real instrument to protect a call that is
+ * already escaped is a worse bug than the one being guarded against.
+ *
+ * So: no control characters — nothing legitimate has them, and they are what
+ * poisons a log line or a header — and a length no listing comes close to.
+ */
+export const okSymbol = (s) => typeof s === 'string'
+  && s.length > 0 && s.length <= 64
+  // eslint-disable-next-line no-control-regex
+  && !/[\u0000-\u001f\u007f]/.test(s);
 
 export const num = (x) => { const v = +x; return isFinite(v) ? v : null; };
 

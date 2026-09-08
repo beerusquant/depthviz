@@ -5,7 +5,7 @@ const CFG = {
   spot: {
     rest: 'https://api.binance.com',
     info: '/api/v3/exchangeInfo',
-    depth: (s) => `/api/v3/depth?symbol=${s}&limit=5000`,
+    depth: (s) => `/api/v3/depth?symbol=${encodeURIComponent(s)}&limit=5000`,
     ticker: '/api/v3/ticker/24hr',
     ws: 'wss://stream.binance.com:9443/ws',
     style: 'from',      // events chain by U === lastUpdateId + 1
@@ -13,7 +13,7 @@ const CFG = {
   perp: {
     rest: 'https://fapi.binance.com',
     info: '/fapi/v1/exchangeInfo',
-    depth: (s) => `/fapi/v1/depth?symbol=${s}&limit=1000`,
+    depth: (s) => `/fapi/v1/depth?symbol=${encodeURIComponent(s)}&limit=1000`,
     ticker: '/fapi/v1/ticker/24hr',
     ws: 'wss://fstream.binance.com/ws',
     style: 'prev',      // events name their predecessor in `pu`
@@ -53,6 +53,10 @@ export const fetchDepthSnapshot = async (rest, path) => {
     bids: snap.bids.map((r) => [+r[0], +r[1]]),
     asks: snap.asks.map((r) => [+r[0], +r[1]]),
     version: snap.lastUpdateId,
+    // The futures REST book is stamped (`E`), the spot one is not. Taking it
+    // where it exists is the difference between a snapshot frame that reports
+    // its upstream latency and one that claims to have no clock at all.
+    ts: Number.isFinite(+snap.E) ? +snap.E : null,
   };
 };
 
@@ -80,7 +84,7 @@ export default {
     const c = CFG[market];
     return openDiffBook({
       label: 'Binance',
-      ws: `${c.ws}/${s.toLowerCase()}@depth@100ms`,
+      ws: `${c.ws}/${encodeURIComponent(s.toLowerCase())}@depth@100ms`,
       style: c.style,
       decode: decodeDepthUpdate,
       snapshot: () => fetchDepthSnapshot(c.rest, c.depth(s)),

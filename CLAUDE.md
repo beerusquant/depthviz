@@ -50,6 +50,28 @@ that reconnects every thirty seconds reads `live` between drops. The measurement
 that cannot lie is the age of the last book — `/api/feeds` reports it, and the
 panel refreshes it every second so a dead feed cannot freeze its own staleness.
 
+## 1 ter. A snapshot is a point in the stream, not an event boundary
+
+The version a REST snapshot reports can land *inside* an event's `[from, to]`
+range or in the **gap between two of them**, so the event that resumes the chain
+is found by a range test, never by an equality — and it may arrive at any time,
+including after the snapshot has already been applied.
+
+That last clause is the whole lesson. The engine looked for the anchoring event
+only among the frames buffered *while the snapshot was in flight*; the first
+event to arrive afterwards was judged with the strict contiguity rule, which it
+can never satisfy. Measured on Binance perp on 2026-09-08: the book had been
+pinned to its REST snapshot **since the adapter was written** — reach ±0.18%
+instead of ±3%, `clock=none` because only snapshot frames were ever published,
+`src=ws` on what was really a resync loop, and a weight-20 REST depth call every
+~400 ms for as long as the feed was open. Nothing in the UI said a word: the
+chart was a perfectly plausible order book, one thousand levels wide.
+
+The tell was in `smoke-feeds.mjs` output all along — `lv=1000/1000`, exactly the
+snapshot limit, next to a spot feed showing `lv=5085/4943`. **A level count that
+equals the venue's REST cap exactly is a book that has never applied a diff.**
+`tools/test-diff-book.mjs` replays the captured ids and pins both styles.
+
 ## 2. ccxt is a judge, never a source
 
 `fetchOrderBook` returns OKX and MEXC sizes in **raw contracts**: ccxt exposes
@@ -57,8 +79,14 @@ panel refreshes it every second so a dead feed cannot freeze its own staleness.
 a 100x error on `BTC-USDT-SWAP` and ~780x on the inverse `BTC-USD-SWAP`.
 Measured, not assumed.
 
-It remains valuable as a **second independent implementation** our hand-written
-adapters can be wrong against: `npm run crosscheck`. On contract-denominated
+OKX's own integrity check is not available to us either: the `books` channel
+still carries a `checksum` field and it is **`0` on every frame** — snapshot and
+update alike, measured live on 2026-09-08. The deep tick-by-tick channels that
+do populate it need VIP4. So the cross-transport drift measurement stays; do not
+spend another afternoon implementing CRC32 for it.
+
+ccxt remains valuable as a **second independent implementation** our
+hand-written adapters can be wrong against: `npm run crosscheck`. On contract-denominated
 venues the **expected ratio is the multiplier, not 1**.
 
 ccxt carries `aster` and `lighter`: both perp DEXs therefore have an external
@@ -166,7 +194,7 @@ A change that was not executed does not exist. Depending on what you touch:
 
 | What you touch | What you show |
 |---|---|
-| `BookSide`, `hub.trim`, a resync | `npm test` (deterministic, no network) |
+| `BookSide`, `hub.trim`, a resync, `diff-book` sequencing | `npm test` (deterministic, no network) |
 | an adapter, a unit conversion | `npm run crosscheck` **and** `node tools/verify-conversions.mjs` |
 | Bitunix (absent from ccxt) | `npm run verify:bitunix` |
 | the UI, the layout, the transport | `node tools/smoke-feeds.mjs`, and `smoke-ui.mjs` if the rendering moves |

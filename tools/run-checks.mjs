@@ -22,9 +22,15 @@ const here = path.dirname(fileURLToPath(import.meta.url));
 const root = path.join(here, '..');
 const LOG = process.env.DEPTHVIZ_CHECK_LOG || path.join(root, 'logs', 'checks.log');
 
+// Every deterministic suite, not a subset of them: `npm test` grew two suites
+// that this list never learned about, so a timer reporting ALL PASS was
+// reporting on two thirds of the arithmetic.
 const CHECKS = [
-  ['unit tests',      ['tools/test-book.mjs']],
+  ['book tests',      ['tools/test-book.mjs']],
+  ['diff-book tests', ['tools/test-diff-book.mjs']],
   ['stitch tests',    ['tools/test-stitch.mjs']],
+  ['trim tests',      ['tools/test-trim.mjs']],
+  ['metrics tests',   ['tools/test-metrics.mjs']],
   ['ccxt crosscheck', ['tools/crosscheck-ccxt.mjs']],
   ['bitunix',         ['tools/verify-bitunix.mjs']],
   ['hyperliquid',     ['tools/verify-hyperliquid.mjs']],

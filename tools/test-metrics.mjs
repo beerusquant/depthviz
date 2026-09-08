@@ -7,7 +7,7 @@
  * of bid depth" was never checked against anything.
  *   node tools/test-metrics.mjs
  */
-import { computeMetrics, fmtUsd, fmtPct, fmtAge, OFI_THRESHOLD } from '../shared/metrics.js';
+import { computeMetrics, fmtUsd, fmtPct, fmtBps, fmtAge, panelRows, IMBALANCE_THRESHOLD } from '../shared/metrics.js';
 
 let pass = 0, fail = 0;
 const ok = (name, cond, detail = '') => {
@@ -67,17 +67,17 @@ const book = {
   // Symmetric in QUANTITY, not in notional — the asks sit at higher prices, so
   // a perfectly mirrored book still carries a small positive ask imbalance.
   // That is the measure doing its job, not a flaw.
-  ok('a mirrored book is neutral', Math.abs(m.ofi) < OFI_THRESHOLD && m.ofiLabel === 'NEUTRAL',
-     `ofi=${m.ofi} ${m.ofiLabel}`);
+  ok('a mirrored book is neutral', Math.abs(m.imbalance) < IMBALANCE_THRESHOLD && m.imbalanceLabel === 'NEUTRAL',
+     `imbalance=${m.imbalance} ${m.imbalanceLabel}`);
 }
 {
   const heavy = { bids: [[99.9, 100], [99, 100]], asks: [[100.1, 1], [101, 1]] };
   const m = computeMetrics(heavy, 10);
-  ok('a bid-heavy book reports BID-heavy', m.ofi > OFI_THRESHOLD && m.ofiLabel === 'BID-heavy',
-     `ofi=${m.ofi}`);
+  ok('a bid-heavy book reports BID-heavy', m.imbalance > IMBALANCE_THRESHOLD && m.imbalanceLabel === 'BID-heavy',
+     `imbalance=${m.imbalance}`);
   const thin = { bids: [[99.9, 1], [99, 1]], asks: [[100.1, 100], [101, 100]] };
-  ok('and the mirror image reports ASK-heavy', computeMetrics(thin, 10).ofiLabel === 'ASK-heavy');
-  ok('OFI is bounded to [-1, 1]', Math.abs(m.ofi) <= 1);
+  ok('and the mirror image reports ASK-heavy', computeMetrics(thin, 10).imbalanceLabel === 'ASK-heavy');
+  ok('imbalance is bounded to [-1, 1]', Math.abs(m.imbalance) <= 1);
 }
 {
   // The truncation flags drive the note under the chart: they must fire when
@@ -125,6 +125,43 @@ const book = {
      fmtAge({ tsRecv: t, tsVenue: t + 30, now: t }) === '0ms \u00b7 venue\u2192us -30ms',
      fmtAge({ tsRecv: t, tsVenue: t + 30, now: t }));
   ok('no book means no age', fmtAge({ tsRecv: null, tsVenue: null, now: t }) === 'n/a');
+}
+
+// The spread is the number a market maker reads first, and as a percentage it
+// rendered as exactly `0.0000%` on the instrument where it matters most: one
+// tick on Binance BTC/USDT is 0.0000127%.
+{
+  ok('a one-tick BTC spread keeps its digits', fmtBps(0.01 / 78744.52 * 100) === '0.0013 bps',
+     fmtBps(0.01 / 78744.52 * 100));
+  ok('a wide book reads in whole basis points', fmtBps(0.05) === '5.00 bps' && fmtBps(3) === '300 bps',
+     `${fmtBps(0.05)} / ${fmtBps(3)}`);
+  ok('no spread is not a rounding artefact', fmtBps(0) === '0 bps' && fmtBps(null) === 'n/a');
+}
+
+// Every band-scoped row states the band it was measured over, and the fixed
+// thresholds are not repeated when the range already is that threshold.
+{
+  const meta = { exchangeName: 'X', market: 'spot', display: 'A/B', vol24h: 1, tsRecv: 1, tsVenue: 1 };
+  const labels = (r) => panelRows(computeMetrics(book, r), meta).map(([l]) => l);
+  ok('band-scoped labels carry their band', labels(0.5).includes('Bid Depth (±0.5%)'),
+     labels(0.5).join(' | '));
+  ok('±2% is not printed twice at range 2', !labels(2).some((l) => l === '+2% Depth'));
+  ok('but it is still there at range 5', labels(5).includes('+2% Depth'));
+}
+
+// A book that reaches past the range has a KNOWN cumulative depth at the edge;
+// one that stops short does not, and must not be drawn there.
+{
+  const m = computeMetrics(book, 2);        // deepest ask inside ±2% is at +0.5%
+  ok('the curve is carried to the edge when the book reaches past it',
+     m.ask.pts.at(-1)[0] === 2 && m.ask.pts.at(-1)[1] === m.askDepth,
+     JSON.stringify(m.ask.pts));
+  ok('and the depth it reports is unchanged by that',
+     m.askDepth === 100.1 * 1 + 100.5 * 2, `${m.askDepth}`);
+
+  const short = computeMetrics({ bids: [[99.99, 1]], asks: [[100.01, 1]] }, 2);
+  ok('a book that stops short is not extended', short.ask.pts.at(-1)[0] < 2 && short.shortAsk,
+     JSON.stringify(short.ask.pts));
 }
 
 console.log(`\n${pass} passed, ${fail} failed`);

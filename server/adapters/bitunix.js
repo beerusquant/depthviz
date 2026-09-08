@@ -1,4 +1,4 @@
-import { fetchJson, ttlCache, poller, reconnectingWs } from '../util.js';
+import { fetchJson, ttlCache, poller, reconnectingWs, coalesce, PUBLISH_MS } from '../util.js';
 
 const SPOT = 'https://openapi.bitunix.com';
 const FUT = 'https://fapi.bitunix.com';
@@ -26,7 +26,7 @@ const futTickers = ttlCache(async () => {
  * overlaps the window, so it is weighted by its overlapping fraction.
  */
 const spotVol = ttlCache(async (symbol) => {
-  const j = await fetchJson(`${SPOT}/api/spot/v1/market/kline?symbol=${symbol}&interval=60`);
+  const j = await fetchJson(`${SPOT}/api/spot/v1/market/kline?symbol=${encodeURIComponent(symbol)}&interval=60`);
   const rows = j.data;
   if (!Array.isArray(rows) || !rows.length) return null;
   const HOUR = 3600_000;
@@ -70,7 +70,7 @@ export default {
     if (market === 'spot') {
       let first = true;
       return poller(async () => {
-        const j = await fetchJson(`${SPOT}/api/spot/v1/market/depth?symbol=${s}&limit=200`);
+        const j = await fetchJson(`${SPOT}/api/spot/v1/market/depth?symbol=${encodeURIComponent(s)}&limit=200`);
         const d = j.data || {};
         const conv = (rows) => (rows || []).map((r) => [+r.price, +r.volume]);
         emit({ bids: conv(d.bids), asks: conv(d.asks), ts: null, source: 'poll' });
@@ -80,20 +80,24 @@ export default {
 
     // Futures: the public websocket streams the whole book (15k+ levels) as a
     // full snapshot several times a second — no diff bookkeeping needed.
-    return reconnectingWs(FUT_WS, {
+    // The raw arrays are handed to the coalescer untouched: on BTC this book
+    // carries 25 000 levels and mapping them is the expensive half, so it must
+    // happen on the frame that is actually shipped, not on every frame received.
+    const publish = coalesce((b, a, ts) => emit({
+      bids: b.map((r) => [+r[0], +r[1]]),
+      asks: a.map((r) => [+r[0], +r[1]]),
+      ts, source: 'ws',
+    }), PUBLISH_MS);
+    const conn = reconnectingWs(FUT_WS, {
       onOpen: (send) => send({ op: 'subscribe', args: [{ symbol: s, ch: 'depth_books' }] }),
       onMessage: (raw) => {
         const m = JSON.parse(raw.toString());
         if (m.op === 'ping' || m.ping) return;
         if (m.ch !== 'depth_books' || !m.data) return;
-        emit({
-          bids: (m.data.b || []).map((r) => [+r[0], +r[1]]),
-          asks: (m.data.a || []).map((r) => [+r[0], +r[1]]),
-          ts: m.ts ?? null,
-          source: 'ws',
-        });
+        publish(m.data.b || [], m.data.a || [], m.ts ?? null);
       },
       onStatus: status,
     }, { pingMs: 20_000, pingPayload: JSON.stringify({ op: 'ping', ping: Math.floor(Date.now() / 1000) }) });
+    return { close() { publish.cancel(); conn.close(); } };
   },
 };

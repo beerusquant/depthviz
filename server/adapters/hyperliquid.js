@@ -1,4 +1,4 @@
-import { postJson, ttlCache, reconnectingWs } from '../util.js';
+import { postJson, ttlCache, reconnectingWs, coalesce, PUBLISH_MS } from '../util.js';
 
 const INFO = 'https://api.hyperliquid.xyz/info';
 const WS = 'wss://api.hyperliquid.xyz/ws';
@@ -141,7 +141,7 @@ export default {
   open(market, s, opts, emit, status) {
     const snaps = LAYERS.map(() => null);
 
-    const publish = () => {
+    const publish = coalesce(() => {
       if (!snaps[0]) return; // the finest layer owns mid/spread; wait for it
       const bids = stitch(snaps.map((x) => x?.bids), true);
       const asks = stitch(snaps.map((x) => x?.asks), false);
@@ -151,7 +151,7 @@ export default {
       // venue ever stopped stamping its frames, so the layers are filtered.
       const stamps = snaps.filter(Boolean).map((x) => x.ts).filter(Number.isFinite);
       emit({ bids, asks, ts: stamps.length ? Math.max(...stamps) : null, source: 'ws' });
-    };
+    }, PUBLISH_MS);
 
     // One socket per layer: the l2Book payload carries only `coin`, `time` and
     // `levels` — it does not echo nSigFigs — so several layers multiplexed on
@@ -171,12 +171,19 @@ export default {
         publish();
       },
       onStatus: (st, d) => {
+        // A layer that is no longer connected knows nothing about the book. Its
+        // last snapshot used to stay in the stitch forever, so one coarse socket
+        // dropping out left frozen depth being served as live — invisible,
+        // because the finest layer kept the mid and the spread moving. Dropping
+        // the layer instead shortens the reported reach until it resubscribes,
+        // which is the honest answer: we cannot see out there right now.
+        if (st !== 'open') { snaps[i] = null; publish(); }
         // Only the finest layer drives the visible connection state; a coarse
         // layer reconnecting must not make the app claim it is offline.
         if (i === 0) status(st, d);
       },
     }, { pingMs: 30_000, pingPayload: JSON.stringify({ method: 'ping' }) }));
 
-    return { close() { for (const c of conns) { try { c.close(); } catch {} } } };
+    return { close() { publish.cancel(); for (const c of conns) { try { c.close(); } catch {} } } };
   },
 };

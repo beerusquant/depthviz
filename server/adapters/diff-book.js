@@ -1,4 +1,4 @@
-import { reconnectingWs, BookSide } from '../util.js';
+import { reconnectingWs, BookSide, coalesce, PUBLISH_MS } from '../util.js';
 
 const TAIL_MAX_GAP_MS = 30_000;   // longer outage => distrust the deep tail
 
@@ -10,6 +10,7 @@ const TAIL_MAX_GAP_MS = 30_000;   // longer outage => distrust the deep tail
  * They differ only in details a config can carry:
  *
  *   ws, subscribe, pingMs, pingPayload   how to open the stream
+ *   connect                              transport factory, for tests only
  *   decode(raw)                          bytes -> { bids, asks, from, to, prev?, ts? }
  *   snapshot()                           -> { bids, asks, version, ts? }
  *   style                                how events chain (see below)
@@ -30,27 +31,40 @@ export function openDiffBook(cfg, emit, status) {
   const bids = new BookSide(true);
   const asks = new BookSide(false);
   let version = null;        // null => not synced yet
+  let anchored = false;      // has the first event after the snapshot been accepted?
   let buffer = [];
   let syncing = false;
   let closed = false;
   let lastGoodAt = 0;        // last diff successfully applied
   let tailSince = 0;         // when the deep tail last started from nothing
 
+  // Does this event straddle the snapshot version, i.e. is it the one that
+  // resumes the chain? A REST snapshot is a point in the stream, not an event
+  // boundary, so the version it reports can land inside an event's range or in
+  // the gap between two of them; the venue's own rule is a range test, not an
+  // equality.
+  const anchors = (e, v) => (cfg.style === 'prev'
+    ? e.from <= v && e.to >= v
+    : e.from <= v + 1 && e.to >= v + 1);
+
   const applyEvt = (e) => {
     const now = Date.now();
     for (const [p, q] of e.bids) bids.set(p, q, now);
     for (const [p, q] of e.asks) asks.set(p, q, now);
     version = e.to;
+    anchored = true;
     lastGoodAt = now;
   };
 
-  const publish = (ts) => emit({
+  // Coalesced: every diff is applied the instant it lands, but the book is only
+  // sorted, bucketed and serialised at the rate anyone can actually consume it.
+  const publish = coalesce((ts) => emit({
     bids: bids.toArray(), asks: asks.toArray(), ts, source: 'ws',
     // The book reaches past a capped snapshot only because diffs for every
     // price level are applied on top of it, so depth outside the snapshot's
     // span is a lower bound that grows with uptime.
     accum: { since: tailSince },
-  });
+  }), PUBLISH_MS);
 
   // Fetch a snapshot, then replay the diffs buffered while it was in flight.
   const resync = async () => {
@@ -68,18 +82,15 @@ export function openDiffBook(cfg, emit, status) {
                  + asks.applySnapshot(snap.asks, { keepTail });
       if (!keepTail || !kept || !tailSince) tailSince = Date.now();
       const v = snap.version;
-      const pending = buffer.filter((e) => e.to > v);
+      // An event already entirely behind the snapshot is spent. On 'prev'
+      // venues the anchoring event may end exactly ON the snapshot version, so
+      // it is `>= v` there and `> v` where the chain is one-past ('from').
+      const pending = buffer.filter((e) => (cfg.style === 'prev' ? e.to >= v : e.to > v));
       buffer = [];
       version = v;
-      let first = true;
+      anchored = false;
       for (const e of pending) {
-        if (first) {
-          const ok = cfg.style === 'prev'
-            ? e.from <= v && e.to >= v
-            : e.from <= v + 1 && e.to >= v + 1;
-          if (!ok) { syncing = false; setTimeout(resync, 400); return; }
-          first = false;
-        }
+        if (!anchored && !anchors(e, v)) continue; // still short of the anchor
         applyEvt(e);
       }
       status('open');
@@ -93,7 +104,12 @@ export function openDiffBook(cfg, emit, status) {
     syncing = false;
   };
 
-  const conn = reconnectingWs(cfg.ws, {
+  // The one seam in this file: tests drive the sequencing engine through a fake
+  // transport instead of a socket. Everything that decides whether a book is
+  // correct — the anchor, the gap detection, the resync — is then deterministic
+  // and needs no network. Nothing else may be injected here.
+  const open = cfg.connect || reconnectingWs;
+  const conn = open(cfg.ws, {
     onOpen: (send) => {
       buffer = []; version = null; syncing = false;
       cfg.subscribe?.(send);
@@ -106,6 +122,17 @@ export function openDiffBook(cfg, emit, status) {
       const contiguous = cfg.style === 'prev' ? e.prev === version : e.from === version + 1;
       if (!contiguous) {
         if (e.to <= version) return; // already applied
+        // Not yet chained to the snapshot: this may simply be the event that
+        // straddles it. The buffer only ever holds what arrived WHILE the
+        // snapshot was in flight, so on a venue whose update ids are not
+        // contiguous the anchoring event routinely arrives after it — and
+        // checking the anchor only against the buffer left the book pinned to
+        // the snapshot forever, resyncing several times a second. Measured on
+        // Binance perp: reach ±0.18% instead of ±3%, no venue clock, and a REST
+        // depth call (weight 20) every ~400 ms for as long as the feed was up.
+        if (!anchored && anchors(e, version)) { applyEvt(e); publish(e.ts ?? null); return; }
+        // Past the anchor without ever hitting it: updates were genuinely
+        // missed, which is the case a resync is for.
         status('reconnecting', `${cfg.label} diff gap, resyncing`);
         buffer = [e];
         resync();
@@ -115,9 +142,13 @@ export function openDiffBook(cfg, emit, status) {
       publish(e.ts ?? null);
     },
     onStatus: (st, detail) => { if (st !== 'open') status(st, detail); },
-  }, { pingMs: cfg.pingMs, pingPayload: cfg.pingPayload });
+    // Every venue here answers an RFC6455 ping with a pong (verified against
+    // all six hosts), so a socket can be proven alive even on a book too quiet
+    // to send a frame — which is what lets the idle watchdog fire only on a
+    // path that is genuinely dead.
+  }, { pingMs: cfg.pingMs ?? 20_000, pingPayload: cfg.pingPayload });
 
   return {
-    close() { closed = true; conn.close(); },
+    close() { closed = true; publish.cancel(); conn.close(); },
   };
 }

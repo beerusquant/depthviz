@@ -1,10 +1,18 @@
 import { adapters } from './adapters/index.js';
+import { PUBLISH_MS, okSymbol } from './util.js';
 
 export const CLIP_PCT = 12;    // never ship levels further than this from mid
 export const EXACT_PCT = 0.6;  // levels this close to mid are shipped verbatim
 export const EXACT_MAX = 2000; // hard cap on verbatim levels per side
 export const BUCKET_BPS = 5;   // geometric bucket width beyond the exact zone
-const THROTTLE_MS = 200;
+// Distances from mid at which a figure is reported as fact — the fixed ±2%/±5%
+// depths, and the widest range the UI offers. A bucket is never allowed to
+// straddle one of these: whichever side of the boundary its VWAP price landed
+// on, the whole bucket would be counted or dropped, so a published depth would
+// be wrong by up to one bucket for no reason. Splitting there makes every
+// reported number exact rather than nearly right.
+export const REPORT_EDGES = [2, 5, 10];
+const THROTTLE_MS = PUBLISH_MS;
 // A viewer flipping between venues used to tear down the upstream connection
 // and rebuild it a second later, and every REST /api/depth call would do the
 // same. A feed with no viewers is kept for this long before it is closed.
@@ -14,6 +22,13 @@ const LINGER_MS = 30_000;
 // this, one stalled viewer on a slow link grows a server-side buffer without
 // bound.
 const MAX_BUFFERED_BYTES = 1 << 20;
+// Every distinct symbol a viewer touches opens upstream connections to an
+// exchange from this host's IP, and they linger. With no ceiling, one visitor
+// cycling a symbol list can have this process holding thousands of sockets and
+// spending someone else's rate-limit budget — the reason the server binds to
+// loopback by default. Past the cap a subscription is refused with a message
+// rather than quietly served from a feed that is starving the others.
+const MAX_FEEDS = +process.env.DEPTHVIZ_MAX_FEEDS || 48;
 
 const feeds = new Map(); // key -> Feed
 
@@ -29,6 +44,7 @@ export function trim(rows, mid) {
   const out = [];
   const step = Math.log(1 + BUCKET_BPS / 10_000);
   let bucket = null;   // current bucket index, null while still verbatim
+  let edge = 0;        // how many report boundaries this level sits beyond
   let notional = 0;
   let qty = 0;
   const flush = () => {
@@ -44,7 +60,9 @@ export function trim(rows, mid) {
       continue;
     }
     const idx = Math.floor(Math.log1p(d / 100) / step);
-    if (idx !== bucket) { flush(); bucket = idx; }
+    let e = 0;
+    while (e < REPORT_EDGES.length && d > REPORT_EDGES[e]) e++;
+    if (idx !== bucket || e !== edge) { flush(); bucket = idx; edge = e; }
     notional += p * q;
     qty += q;
   }
@@ -189,7 +207,11 @@ export function subscribe(client, { exchange, market, symbol, range }, currentFe
   const ad = adapters[exchange];
   if (!ad) throw new Error(`unknown exchange ${exchange}`);
   if (!ad.markets.includes(market)) throw new Error(`${ad.name} has no ${market} market`);
-  const opts = { range: +range || 2 };
+  if (!okSymbol(symbol)) throw new Error('invalid symbol');
+  // The range only ever selects a view of a book that is clipped at ±12%
+  // anyway, so a caller cannot widen the work this server does by asking for
+  // ±1e9 — but it also must not reach the arithmetic as NaN or a negative.
+  const opts = { range: Math.min(50, Math.max(0.01, +range || 2)) };
   const extra = ad.subKey ? ad.subKey(market, symbol, opts) : '';
   const key = `${exchange}:${market}:${symbol}:${extra}`;
   // A range change that does not alter the upstream subscription must not
@@ -197,7 +219,13 @@ export function subscribe(client, { exchange, market, symbol, range }, currentFe
   if (currentFeed && currentFeed.key === key) return currentFeed;
   if (currentFeed) currentFeed.remove(client);
   let feed = feeds.get(key);
-  if (!feed) { feed = new Feed(key, exchange, market, symbol, opts); feeds.set(key, feed); }
+  if (!feed) {
+    if (feeds.size >= MAX_FEEDS) {
+      throw new Error(`this server already holds ${feeds.size} live feeds (max ${MAX_FEEDS}); try again in a moment`);
+    }
+    feed = new Feed(key, exchange, market, symbol, opts);
+    feeds.set(key, feed);
+  }
   feed.add(client);
   return feed;
 }

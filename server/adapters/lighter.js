@@ -1,4 +1,4 @@
-import { fetchJson, ttlCache, reconnectingWs, BookSide } from '../util.js';
+import { fetchJson, ttlCache, reconnectingWs, BookSide, coalesce, PUBLISH_MS } from '../util.js';
 
 const REST = 'https://mainnet.zklighter.elliot.ai/api/v1';
 const WS = 'wss://mainnet.zklighter.elliot.ai/stream';
@@ -61,10 +61,10 @@ export default {
       for (const r of ob.bids || []) bids.set(r.price, r.size, now);
       for (const r of ob.asks || []) asks.set(r.price, r.size, now);
     };
-    const publish = (ts) => {
+    const publish = coalesce((ts) => {
       const b = bids.toArray(), a = asks.toArray();
       if (b.length && a.length) emit({ bids: b, asks: a, ts, source: 'ws' });
-    };
+    }, PUBLISH_MS);
 
     // A nonce gap means levels changed unseen; the only cure the venue offers
     // is a fresh snapshot, and it refuses a second subscribe on a live channel
@@ -107,6 +107,6 @@ export default {
       onStatus: (st, detail) => { if (st !== 'open') status(st, detail); },
     }, { pingMs: 20_000, pingPayload: JSON.stringify({ type: 'ping' }) });
 
-    return { close() { closed = true; clearTimeout(resubTimer); conn.close(); } };
+    return { close() { closed = true; publish.cancel(); clearTimeout(resubTimer); conn.close(); } };
   },
 };

@@ -14,6 +14,7 @@ const state = {
   range: 2,
   symbols: [],
   book: null,
+  bookSeq: 0,
   vol24h: null,
   metrics: null,
   status: 'connecting',
@@ -29,10 +30,21 @@ const exName = () => exOf(state.exchange)?.name || state.exchange;
 // ---------------------------------------------------------------- rendering
 function invalidate() { state.dirty = true; }
 
+// The chart is redrawn for reasons that do not change a single number: a
+// crosshair moving under the finger, the once-a-second tick that keeps the book
+// age honest, a window resize. Recomputing the whole book on those is pure
+// waste, so the metrics are keyed on the only two things they depend on.
+let metricsKey = null;
+
 function frame() {
   if (state.dirty) {
     state.dirty = false;
-    state.metrics = state.book ? computeMetrics(state.book, state.range) : null;
+    const key = `${state.bookSeq}:${state.range}`;
+    if (key !== metricsKey) {
+      metricsKey = key;
+      state.metrics = state.book ? computeMetrics(state.book, state.range) : null;
+    }
+    renderLive();
     draw(canvas, {
       range: state.range,
       metrics: state.metrics,
@@ -53,6 +65,25 @@ function frame() {
     renderNote();
   }
   requestAnimationFrame(frame);
+}
+
+/**
+ * The badge's second line is the age of the book it is calling LIVE.
+ *
+ * It used to read the constant word "STREAMING", which is a claim about the
+ * transport, not about the data — a feed whose venue has gone quiet keeps that
+ * word forever. The age is the one number that moves when nothing arrives, and
+ * it belongs in the widget people actually look at rather than only at the
+ * bottom of a sixteen-row panel. It is deliberately not colour-coded: on an
+ * illiquid book a two-minute-old top of book is correct, and a badge that cried
+ * wolf there would be ignored on the day it mattered.
+ */
+function renderLive() {
+  if (state.status !== 'live') return;
+  const t = state.book?.tsRecv;
+  const age = t ? Math.max(0, Date.now() - t) : null;
+  $('live-s').textContent = age == null ? ''
+    : age < 1000 ? ` ${age}ms` : ` ${(age / 1000).toFixed(age < 60_000 ? 1 : 0)}s`;
 }
 
 function renderNote() {
@@ -91,7 +122,7 @@ function setStatus(s, detail = '') {
   const el = $('live');
   el.classList.remove('live-on', 'live-wait', 'live-err');
   const map = {
-    live: ['live-on', 'LIVE', 'STREAMING'],
+    live: ['live-on', 'LIVE', ''],
     connecting: ['live-wait', 'CONNECTING', ''],
     reconnecting: ['live-wait', 'RECONNECTING', ''],
     idle: ['live-wait', 'IDLE', ''],
@@ -115,6 +146,7 @@ function connect() {
     else if (m.op === 'book') {
       if (m.exchange !== state.exchange || m.market !== state.market || m.symbol !== state.symbol) return;
       state.book = { bids: m.bids, asks: m.asks, tsVenue: m.tsVenue, tsRecv: m.tsRecv, source: m.source, levels: m.levels, accum: m.accum };
+      state.bookSeq++;
       state.vol24h = m.vol24h;
       if (state.status !== 'live') setStatus('live');
       invalidate();
@@ -171,6 +203,7 @@ function selectSymbol(s) {
   state.display = s.d;
   state.quote = s.quote || 'USD';
   state.book = null;
+  state.bookSeq++;
   state.vol24h = null;
   $('sym-input').value = s.d;
   closeMenu($('sym-menu'));
@@ -321,7 +354,7 @@ function snapshotPayload() {
       exchangeName: exName(), market: state.market, display: state.display, vol24h: state.vol24h,
       tsVenue: state.book?.tsVenue ?? null, tsRecv: state.book?.tsRecv ?? null,
     })
-      .map(([l, v]) => `${(l + ':').padEnd(14)}${v}`).join('\n'),
+      .map(([l, v]) => `${(l + ':').padEnd(18)}${v}`).join('\n'),
     json: {
       ...meta,
       mid: m.mid, bestBid: m.bestBid, bestAsk: m.bestAsk,
@@ -331,7 +364,7 @@ function snapshotPayload() {
       bidDepth: m.bidDepth, askDepth: m.askDepth, totalDepth: m.totalDepth,
       depthPlus2: m.depthPlus2, depthMinus2: m.depthMinus2,
       depthPlus5: m.depthPlus5, depthMinus5: m.depthMinus5,
-      ofi: m.ofi, ofiLabel: m.ofiLabel,
+      imbalance: m.imbalance, imbalanceLabel: m.imbalanceLabel,
     },
   };
 }

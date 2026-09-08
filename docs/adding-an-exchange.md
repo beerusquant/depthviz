@@ -46,3 +46,21 @@ accumulating diffs, so the UI can say the far depth is still converging
 ([tradeoff 7](architecture.md#tradeoffs-i-had-to-make)); `drift` is a 0..1
 disagreement between two transports of the same venue, where one exists
 ([tradeoff 8](architecture.md#tradeoffs-i-had-to-make)). The UI needs no changes.
+
+Two rules about *when* you may emit, both of which have already been broken here:
+
+- **Coalesce.** Apply every upstream frame to your book immediately, but wrap
+  the function that materialises and emits it in `coalesce(fn, PUBLISH_MS)` and
+  call `.cancel()` from `close()`. Sorting a 20 000-level book ten times a
+  second so the hub can discard nine of them costs ~35 ms of event loop per
+  second, on the thread every other feed decodes on.
+- **Prove the socket is alive, do not assume it.** Pass `pingMs` so
+  `reconnectingWs` arms its idle watchdog: a socket killed by a NAT timeout
+  stays `OPEN` forever with no error and no close, and the feed then serves a
+  frozen book while reading `live`. All eight venues answer an RFC6455 ping with
+  a pong (verified), so a quiet-but-healthy book is never mistaken for a dead
+  path.
+
+If the venue is a snapshot + versioned-diff book, note that `openDiffBook`
+accepts a `connect` factory. That seam exists for `tools/test-diff-book.mjs` and
+nothing else — do not use it to inject venue behaviour.

@@ -96,6 +96,14 @@ below was measured against a live venue, not assumed.
    before the selected range (Binance spot's 5 000 levels only span ~±0.6% on
    BTC), the curve ends where the data ends and a note says so, instead of
    flat-lining to the edge and implying depth that is not there.
+
+   The converse matters just as much and was wrong for longer: when the book
+   *does* reach past the range, cumulative depth at the edge is known — it is
+   the last level's, because there is nothing between them — so the curve is
+   carried out to it. On Binance BTC the deepest ask inside ±2% often sits at
+   +1.85%, and the curve used to stop there, drawing a truncated-looking book
+   under a truncation note that (correctly) never fired. Draw the known value
+   where it is known; stop where it is not.
 6. **OKX needs two transports to reach past +-0.3%.** The `books` websocket
    channel is capped at 400 levels — ~+-0.28% of mid on BTC. REST
    `books-full` returns 5 000 (~+-1.3%) but is not streamed, and the deeper
@@ -113,7 +121,7 @@ below was measured against a live venue, not assumed.
    diff are invisible to us forever, so far depth on Binance and MEXC only ever
    grows with uptime. It is never overstated, but it was presented as settled.
    Those adapters now report when their tail last restarted, and the panel says
-   *depth beyond ±0.6% is still converging* for the first three minutes.
+   *depth beyond ±0.6% is still filling in* for the first minute, then stops.
 
 8. **OKX's two transports check each other for free.** The socket's 400 levels
    and the 1 s `books-full` poll overlap completely, and nothing compared them.
@@ -122,9 +130,76 @@ below was measured against a live venue, not assumed.
    15% force a resubscribe. Measured live: **0.00-0.18%**, i.e. the incremental
    book and the venue's own full book agree.
 
+   This exists *because* the venue's own check does not. OKX still sends a
+   `checksum` field on the `books` channel and it is **`0` on every frame**,
+   snapshot and update alike (measured 2026-09-08); the tick-by-tick channels
+   that populate it require VIP4. The cross-transport measurement is the
+   replacement, and it is a heuristic — a run of breaches, not one.
+
 9. **`±2%`/`±5%` depths are fixed thresholds**, independent of the range
    selector; `Bid Depth`/`Ask Depth` are the cumulative notional inside the
    *selected* range. They coincide when the book does not reach the threshold.
+   Because they are published as fact, `hub.trim` is forbidden from letting a
+   bucket straddle one: whichever side of ±2% a bucket's VWAP price fell on, the
+   whole bucket was counted or dropped. On a book decaying at a realistic rate
+   that overstated the ±2% depth by **0.51%**; splitting the bucket at the
+   boundary makes it exact to floating point. `tools/test-trim.mjs` pins it.
+
+10. **Every band-scoped number carries its band.** `Bid Depth`, `Ask Depth`,
+   `Total Depth`, both VWAPs and the imbalance are all measured over the
+   selected range, and their panel labels now say so (`Bid Depth (±2%)`). What
+   used to be called `OFI` is called `Imbalance`: order-flow imbalance is built
+   from *changes* in the book between two instants, this is resting depth at
+   one instant. The arithmetic never changed — only a name that promised a
+   different quantity to the readers most likely to act on it.
+
+11. **The spread is quoted in basis points.** One tick on Binance BTC/USDT is
+   0.0000127% and the panel printed `0.0000%`: the number a market maker reads
+   first, rendered as zero, on the most-viewed instrument in the app. And the
+   ±2%/±5% rows are dropped when the selected range *is* that threshold — they
+   repeated `Bid Depth`/`Ask Depth` digit for digit, four rows carrying two
+   numbers on the default view.
+
+## Where work is allowed to happen
+
+An order book is a snapshot, not a log: when frames arrive faster than anyone
+can consume them, the intermediate ones are dropped, and the only question is
+*where*. It used to be at the very end — each adapter sorted, bucketed and
+serialised its whole book on every upstream frame (Binance sends one every
+100 ms), and the hub then discarded about 95% of that at its own 200 ms
+throttle. Measured on a 20 000-level side: **2.2 ms to sort both sides plus
+1.3 ms to bucket them, i.e. ~35 ms of event-loop time per second per feed**,
+nearly all of it thrown away — and paid on the single thread every other feed
+decodes on.
+
+`coalesce(fn, PUBLISH_MS)` in `server/util.js` moves the drop to the front: every
+diff is still applied to the book the instant it lands, but the book is only
+materialised at the rate it can be shipped. `PUBLISH_MS` is one constant, used
+by the adapters to coalesce and by the hub to throttle, so the two cannot
+disagree. The trailing call always carries the arguments of the most recent
+invocation — a fresh book must never be paired with an older venue clock.
+
+## What this tool cannot tell you
+
+Stated plainly, because a limit nobody wrote down is a limit somebody will
+discover as a bug:
+
+- **Coinbase's `level2_batch` carries no sequence number.** Every other
+  streaming venue here chains its updates (`U`/`u`/`pu`, `seqId`/`prevSeqId`,
+  `begin_nonce`), so a dropped frame is detected and forces a resync. On
+  Coinbase it cannot be: a lost update would leave a wrong level with nothing
+  to say so. The socket's liveness is proven (the idle watchdog), the ordering
+  is not.
+- **A book is only as fresh as the venue is talkative.** `tsRecv` and the age on
+  the badge are the honest answer, and they are deliberately not colour-coded:
+  on an illiquid pair a two-minute-old top of book is correct, not stale.
+- **Depth past a capped snapshot is a lower bound on Binance, MEXC and Aster**,
+  forever — levels that sat out there before we connected and were never touched
+  again are invisible to us. It can only be understated, never overstated.
+- **Nothing here is an execution model.** The depth curve is resting size at an
+  instant; it says nothing about what would actually fill, about hidden or
+  iceberg liquidity, or about what the book looks like a millisecond after the
+  first order lands.
 
 ## The hub, and what it is allowed to do to a book
 

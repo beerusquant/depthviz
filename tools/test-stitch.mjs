@@ -89,5 +89,28 @@ console.log('stitch (Hyperliquid layer reconciliation)');
      stitch([fine, undefined, coarse], true), [[100, 1], [98, 3]]);
 }
 
+// A layer whose socket went down is dropped from the stitch rather than left in
+// it holding a frozen snapshot. What that costs is exactly what it should:
+// resolution where the dead layer was finer, and reach only when the layer that
+// dropped was the outermost one. Cumulative depth never moves, because the
+// layers reconcile on cumulative quantity rather than on price boundaries.
+{
+  const fine   = [[100, 1], [99, 1]];
+  const mid    = [[100, 2], [98, 3]];       // per-level: cumulative 5 out to 98
+  const coarse = [[100, 5], [95, 9]];       // per-level: cumulative 14 out to 95
+  const total = (rows) => rows.reduce((s, [, q]) => s + q, 0);
+
+  const whole = stitch([fine, mid, coarse], true);
+  const noMid = stitch([fine, null, coarse], true);
+  eq('losing a middle layer costs resolution, not depth',
+     [total(noMid), total(whole)], [14, 14]);
+  eq('and the remaining layers still reconcile on cumulative quantity',
+     noMid, [[100, 1], [99, 1], [95, 12]]);
+
+  const noOuter = stitch([fine, mid, null], true);
+  eq('losing the outermost layer shortens the reach instead of inventing depth',
+     [noOuter.at(-1)[0], total(noOuter)], [98, 5]);
+}
+
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);
