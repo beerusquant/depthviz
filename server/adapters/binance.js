@@ -46,19 +46,19 @@ export const decodeDepthUpdate = (raw) => {
   };
 };
 
-/** The REST depth snapshot, same shape on every Binance-API clone. */
-export const fetchDepthSnapshot = async (rest, path) => {
-  const snap = await fetchJson(rest + path);
-  return {
-    bids: snap.bids.map((r) => [+r[0], +r[1]]),
-    asks: snap.asks.map((r) => [+r[0], +r[1]]),
-    version: snap.lastUpdateId,
-    // The futures REST book is stamped (`E`), the spot one is not. Taking it
-    // where it exists is the difference between a snapshot frame that reports
-    // its upstream latency and one that claims to have no clock at all.
-    ts: Number.isFinite(+snap.E) ? +snap.E : null,
-  };
-};
+/** The REST depth snapshot payload -> the engine's shape. Pure, so it is tested. */
+export const mapDepthSnapshot = (snap) => ({
+  bids: snap.bids.map((r) => [+r[0], +r[1]]),
+  asks: snap.asks.map((r) => [+r[0], +r[1]]),
+  version: snap.lastUpdateId,
+  // The futures REST book is stamped (`E`), the spot one is not. Taking it
+  // where it exists is the difference between a snapshot frame that reports its
+  // upstream latency and one that claims to have no clock at all.
+  ts: Number.isFinite(+snap.E) ? +snap.E : null,
+});
+
+/** The same snapshot, fetched. */
+export const fetchDepthSnapshot = async (rest, path) => mapDepthSnapshot(await fetchJson(rest + path));
 
 export default {
   id: 'binance',

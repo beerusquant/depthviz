@@ -28,6 +28,7 @@ const LOG = process.env.DEPTHVIZ_CHECK_LOG || path.join(root, 'logs', 'checks.lo
 const CHECKS = [
   ['book tests',      ['tools/test-book.mjs']],
   ['diff-book tests', ['tools/test-diff-book.mjs']],
+  ['adapter tests',   ['tools/test-adapters.mjs']],
   ['reconnect tests', ['tools/test-reconnect.mjs']],
   ['stitch tests',    ['tools/test-stitch.mjs']],
   ['trim tests',      ['tools/test-trim.mjs']],

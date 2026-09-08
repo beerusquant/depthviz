@@ -25,22 +25,24 @@ const futTickers = ttlCache(async () => {
  * units, valued at each candle's own close. The oldest candle only partly
  * overlaps the window, so it is weighted by its overlapping fraction.
  */
-const spotVol = ttlCache(async (symbol) => {
-  const j = await fetchJson(`${SPOT}/api/spot/v1/market/kline?symbol=${encodeURIComponent(symbol)}&interval=60`);
-  const rows = j.data;
+export function sumCandleVolume(rows, now = Date.now(), hours = 24, bucketMs = 3600_000) {
   if (!Array.isArray(rows) || !rows.length) return null;
-  const HOUR = 3600_000;
-  const cutoff = Date.now() - 24 * HOUR;
+  const cutoff = now - hours * bucketMs;
   let total = 0;
   for (const k of rows) {
     const start = Date.parse(k.ts);
     if (!isFinite(start)) continue;
-    const end = start + HOUR;
+    const end = start + bucketMs;
     if (end <= cutoff) break; // rows come newest-first
-    const overlap = Math.min(1, (end - Math.max(start, cutoff)) / HOUR);
+    const overlap = Math.min(1, (end - Math.max(start, cutoff)) / bucketMs);
     total += +k.volume * +k.close * overlap;
   }
   return isFinite(total) && total > 0 ? total : null;
+}
+
+const spotVol = ttlCache(async (symbol) => {
+  const j = await fetchJson(`${SPOT}/api/spot/v1/market/kline?symbol=${encodeURIComponent(symbol)}&interval=60`);
+  return sumCandleVolume(j.data);
 }, 60_000);
 
 export default {
@@ -130,7 +132,10 @@ export default {
       if (bids.length && asks.length) lastBook = { bids, asks };
       emit({ bids, asks, ts, source: 'ws', drift });
     }, PUBLISH_MS);
-    const conn = reconnectingWs(FUT_WS, {
+    // The one seam here: tests drive this adapter through a fake transport
+    // instead of a socket. The hub only ever builds `opts` as { range }, so
+    // nothing in production reaches it.
+    const conn = (opts?.connect || reconnectingWs)(FUT_WS, {
       onOpen: (send) => send({ op: 'subscribe', args: [{ symbol: s, ch: 'depth_books' }] }),
       onMessage: (raw) => {
         const m = JSON.parse(raw.toString());

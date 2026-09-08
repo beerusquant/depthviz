@@ -73,7 +73,10 @@ export default {
       }, 500);
     };
 
-    const conn = reconnectingWs(WS, {
+    // The one seam here: tests drive this adapter through a fake transport
+    // instead of a socket. The hub only ever builds `opts` as { range }, so
+    // nothing in production reaches it.
+    const conn = (opts?.connect || reconnectingWs)(WS, {
       onOpen: (send) => {
         seq = null; bids.clear(); asks.clear();
         sub(send, 'subscribe');

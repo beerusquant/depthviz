@@ -45,7 +45,7 @@ const futTickers = ttlCache(async () => {
  * changed, which is the honest thing to compare our receive time against.
  */
 const DEPTH_BODY_FIELD = 313;
-function decodeSpotDepth(buf) {
+export function decodeSpotDepth(buf) {
   const top = pbFields(buf);
   const body = top.get(DEPTH_BODY_FIELD)?.[0];
   if (!body) return null;
@@ -62,6 +62,26 @@ function decodeSpotDepth(buf) {
     from: +str(4),
     to: +str(5),
     ts: typeof sent === 'bigint' ? Number(sent) : null,
+  };
+}
+
+/**
+ * The perp `push.depth` payload. Sizes are in CONTRACTS, so `cs` is applied
+ * here and the engine never learns that contracts exist. Exported because a
+ * forgotten multiplier is an invisible order-of-magnitude error, and because
+ * both timestamps were once dropped on this exact path.
+ */
+export function decodePerpDepth(raw, cs) {
+  const msg = JSON.parse(raw.toString());
+  if (msg.channel !== 'push.depth' || !msg.data) return null;
+  const d = msg.data;
+  return {
+    bids: (d.bids || []).map((r) => [+r[0], +r[1] * cs]),
+    asks: (d.asks || []).map((r) => [+r[0], +r[1] * cs]),
+    from: d.begin, to: d.end ?? d.version,
+    // `cts` is when the book changed, `ts` when the frame was sent; prefer the
+    // former. Both were being ignored, so this feed claimed no clock.
+    ts: d.cts ?? msg.ts ?? null,
   };
 }
 
@@ -100,19 +120,7 @@ const perpBook = (s, cs) => ({
   pingMs: 15_000,
   pingPayload: JSON.stringify({ method: 'ping' }),
   style: 'from',
-  decode: (raw) => {
-    const msg = JSON.parse(raw.toString());
-    if (msg.channel !== 'push.depth' || !msg.data) return null;
-    const d = msg.data;
-    return {
-      bids: (d.bids || []).map((r) => [+r[0], +r[1] * cs]),
-      asks: (d.asks || []).map((r) => [+r[0], +r[1] * cs]),
-      from: d.begin, to: d.end ?? d.version,
-      // `cts` is when the book changed, `ts` when the frame was sent; prefer
-      // the former. Both were being ignored, so this feed claimed no clock.
-      ts: d.cts ?? msg.ts ?? null,
-    };
-  },
+  decode: (raw) => decodePerpDepth(raw, cs),
   snapshot: async () => {
     const j = await fetchJson(`${FUT}/api/v1/contract/depth/${encodeURIComponent(s)}`);
     const d = j.data || {};

@@ -156,7 +156,10 @@ export default {
     // One socket per layer: the l2Book payload carries only `coin`, `time` and
     // `levels` — it does not echo nSigFigs — so several layers multiplexed on
     // one connection could not be told apart.
-    const conns = LAYERS.map((sub, i) => reconnectingWs(WS, {
+    // The one seam here: tests drive this adapter through a fake transport
+    // instead of a socket. The hub only ever builds `opts` as { range }, so
+    // nothing in production reaches it.
+    const conns = LAYERS.map((sub, i) => (opts?.connect || reconnectingWs)(WS, {
       onOpen: (send) => send({ method: 'subscribe', subscription: { type: 'l2Book', coin: s, ...sub } }),
       onMessage: (raw) => {
         const msg = JSON.parse(raw.toString());

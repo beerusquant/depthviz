@@ -153,6 +153,26 @@ widening it further. Widening a tolerance to accommodate someone else's variance
 buys silence, not confidence — and the wide band is what made that check blind
 to anything under a 2x error.
 
+## 2 ter. A venue's payload is recorded, never imagined
+
+`tools/fixtures/venues.json` holds one real frame from each venue and
+`tools/test-adapters.mjs` replays them, so a decoder or a unit conversion can be
+wrong in CI instead of only in production. Two rules come with it:
+
+- **Re-record with `tools/capture-fixtures.mjs`, read the diff, then change the
+  adapter.** A fixture edited by hand to match new code proves nothing — it is
+  the same failure as a screenshot drawn instead of captured.
+- **A test suite is worth what it catches.** This one was checked by mutation:
+  seven deliberate breaks, one at a time, all seven caught — linear multiplier
+  dropped, inverse contract treated as linear, MEXC `contractSize` dropped, MEXC
+  protobuf clock discarded, a Bitunix candle straddling the cutoff counted
+  whole, Coinbase gap detection disabled, Lighter nonce chain ignored. Do that
+  before believing a green suite.
+
+Adapters expose one seam for this and no other: `opts.connect`, a transport
+factory the tests pass in. The hub only ever builds `opts` as `{ range }`, so
+nothing in production reaches it. Do not use it to inject venue behaviour.
+
 ## 3. A check that cries wolf is worse than no check
 
 - **Neither a `SKIP` nor an `INCONC` counts as a pass.** Both are an absence of
@@ -255,7 +275,7 @@ A change that was not executed does not exist. Depending on what you touch:
 | What you touch | What you show |
 |---|---|
 | `BookSide`, `hub.trim`, a resync, `diff-book` sequencing | `npm test` (deterministic, no network) |
-| an adapter, a unit conversion | `npm run crosscheck` **and** `node tools/verify-conversions.mjs` |
+| an adapter, a unit conversion | `node tools/test-adapters.mjs` (deterministic, replays recorded frames), **then** `npm run crosscheck` **and** `node tools/verify-conversions.mjs` |
 | Bitunix (absent from ccxt) | `npm run verify:bitunix` |
 | `reconnectingWs`, a socket's lifecycle | `node tools/test-reconnect.mjs` — both halves: a dead path is dropped, a quiet-but-answering one is not |
 | the UI, the layout, the transport | `node tools/smoke-feeds.mjs`, and `smoke-ui.mjs` if the rendering moves |

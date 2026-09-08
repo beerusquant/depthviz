@@ -146,7 +146,7 @@ server/util.js      reconnecting sockets, publish coalescing, the book side, the
 server/adapters/    one file per venue + diff-book.js, the engine five feeds share
 shared/metrics.js   every number on screen and in /api/depth — one implementation
 public/             the page: ES modules and canvas, no build step
-tools/              the proofs: unit tests, live verifiers, smoke tests, screenshots
+tools/              the proofs: unit tests, recorded venue fixtures, live verifiers, smoke tests
 docs/               the long-form documentation
 deploy/             systemd units, the hourly check timer, the macOS launcher
 ```

@@ -17,6 +17,7 @@ in CI on Node 20 and 22 on every push:
 | `test-book` | `BookSide.applySnapshot`: whether accumulated depth survives a resync, and when it must not |
 | `test-stitch` | the Hyperliquid layer reconciliation and its cumulative identity |
 | `test-trim` | that reducing the payload preserves cumulative quantity, notional, VWAP **and reach** |
+| `test-adapters` | every venue's decoder and unit conversion, replayed from real recorded frames — the OKX contract multiplier and its inverse form, MEXC's hand-written protobuf reader and contract size, Binance/Aster's `depthUpdate`, Bitunix's candle-summed volume, and the Coinbase and Lighter gap-recovery paths |
 | `test-reconnect` | the socket liveness watchdog: a path that proves nothing is dropped, and a quiet book whose venue still answers a ping is left alone |
 | `test-diff-book` | the sequencing engine five feeds share: the anchor after a snapshot, gap detection, resync — replayed from ids captured live on Binance perp |
 | `test-metrics` | every number in the panel — depth, VWAP, imbalance, the truncation flags |
@@ -165,6 +166,22 @@ figure that previously had no judge whatsoever — and the perp volume at
 **1.0061**. It publishes no order book, so **depth remains judged only by the
 venue against itself**. An unreachable or rate-limited judge reports INCONC and
 exits non-zero, exactly as a ccxt failure does.
+
+Until `test-adapters.mjs` existed, this cross-check was the *only* thing
+watching seven of the eight adapters: `diff-book` and Hyperliquid's `stitch`
+were the sole adapter code with a deterministic test, and every decoder, every
+unit conversion and every sequence rule rested on an hourly check that cannot
+run in CI and that SKIPs when a venue has a bad minute. A renamed field would
+have sailed through until somebody read the log.
+
+That suite now replays a real recorded frame from each venue —
+`tools/fixtures/venues.json`, produced by `tools/capture-fixtures.mjs`, never
+hand-written. It has teeth, which was checked the only way that means anything:
+seven mutations were introduced one at a time and every one was caught — the
+linear multiplier dropped, an inverse contract treated as linear, MEXC's
+`contractSize` dropped, MEXC's protobuf clock discarded, a Bitunix candle
+straddling the cutoff counted whole, Coinbase's gap detection disabled, and
+Lighter's nonce chain ignored.
 
 A single sample of a thin book can land 2x off simply because the book moved
 between the two reads, so one ratio proves little. `--repeat N` holds one socket

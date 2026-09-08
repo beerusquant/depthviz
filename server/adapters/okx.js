@@ -18,6 +18,25 @@ const instType = (m) => (m === 'perp' ? 'SWAP' : 'SPOT');
 const DRIFT_TOLERANCE = 0.03;   // cumulative-size disagreement over the overlap
 const DRIFT_BREACHES = 3;       // consecutive breaches before forcing a resync
 
+/**
+ * A SWAP instrument's contract spec, and the function that applies it.
+ *
+ * Exported because this is the single most dangerous arithmetic in the repo: a
+ * forgotten multiplier is a 100x error on BTC-USDT-SWAP and ~780x on the inverse
+ * BTC-USD-SWAP, and the chart stays beautiful either way. It is pinned by
+ * tools/test-adapters.mjs against the venue's own published ctVal/ctMult/ctType.
+ */
+export const specOf = (i) => ({
+  mult: (+i.ctVal || 1) * (+i.ctMult || 1),
+  inverse: i.ctType === 'inverse',
+});
+
+export const contractsToBase = (spec) => (spec.inverse
+  // ctVal is quoted in USD on an inverse contract, so the base amount a
+  // contract represents depends on the price of the level it sits at.
+  ? (px, sz) => (sz * spec.mult) / px
+  : (px, sz) => sz * spec.mult);
+
 const instruments = ttlCache(async (market) => {
   const j = await fetchJson(`${REST}/api/v5/public/instruments?instType=${instType(market)}`);
   if (j.code !== '0') throw new Error(`OKX instruments: ${j.msg}`);
@@ -35,10 +54,7 @@ const contractSpec = ttlCache(async (market) => {
   if (market !== 'perp') return new Map();
   const m = new Map();
   for (const i of await instruments(market)) {
-    m.set(i.instId, {
-      mult: (+i.ctVal || 1) * (+i.ctMult || 1),
-      inverse: i.ctType === 'inverse',
-    });
+    m.set(i.instId, specOf(i));
   }
   return m;
 }, 5 * 60_000);
@@ -78,9 +94,7 @@ export default {
     const asks = new BookSide(false);
     let seq = null;
 
-    const toBase = spec.inverse
-      ? (px, sz) => (sz * spec.mult) / px   // contracts are USD-denominated
-      : (px, sz) => sz * spec.mult;
+    const toBase = contractsToBase(spec);
     const apply = (side, rows) => { for (const r of rows) side.set(r[0], toBase(+r[0], +r[1])); };
 
     // The `books` channel is capped at 400 levels — on BTC that is only ~+-0.3%
@@ -164,7 +178,11 @@ export default {
       ts, source: 'ws', drift,
     }), PUBLISH_MS);
 
-    const conn = reconnectingWs(WS, {
+  // The one seam here: tests drive this adapter through a fake transport
+  // instead of a socket, so the decoding and the sequencing are deterministic
+  // and need no network. The hub only ever builds `opts` as { range }, so
+  // nothing in production reaches it. Nothing else may be injected.
+    const conn = (opts?.connect || reconnectingWs)(WS, {
       onOpen: (send) => {
         seq = null; bids.clear(); asks.clear();
         send({ op: 'subscribe', args: [{ channel: 'books', instId: s }] });
