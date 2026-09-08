@@ -146,12 +146,16 @@ below was measured against a live venue, not assumed.
    was never measured, and with the run requirement it could not fire on
    anything short of a catastrophe.
 
-   Bitunix now carries the same measurement for the same reason: it is absent
-   from all 103 ccxt exchanges, so its stream has no external judge at all. Its
-   websocket book is compared every 5 s against the venue's own REST book over
-   ±0.5% of mid and the result is published as `drift`. It only reports — there
-   is no calibrated threshold to act on yet, and inventing one would be the
-   mistake this paragraph exists to record.
+   Bitunix carries the same measurement for a different reason: it is absent
+   from all 103 ccxt exchanges. Its websocket book is compared every 5 s against
+   the venue's own REST book over ±0.5% of mid and published as `drift`. The
+   adapter never acts on it — Bitunix perp streams full snapshots, so a wrong
+   book repairs itself on the next frame and there is nothing to resync — so the
+   threshold lives in `verify-bitunix`, on the median of ten readings, at 2%.
+   That number is the widest the data supports: sampled for 20 minutes on four
+   instruments, BTCUSDT runs median 0.288% / max 2.76% while SOLUSDT runs 3.42% /
+   16.73%, an order of magnitude apart, so a single global threshold would be
+   silent on one and permanently breached on the other.
 
    This exists *because* the venue's own check does not. OKX still sends a
    `checksum` field on the `books` channel and it is **`0` on every frame**,

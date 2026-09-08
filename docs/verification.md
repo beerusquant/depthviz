@@ -140,15 +140,31 @@ when inverse); anything else is the error. It takes the median of 3 samples by
 default, because one sample is not a verdict. Last full run: **all 11 judged
 instruments agree**, medians 0.94–1.03 — Aster at **1.004** (n=3) and Lighter at
 **1.010** (n=15, judged on the ±0.046% its 100-level ccxt book spans against our
-whole-book stream), both with the mid identical to four decimals. Bitunix is absent from ccxt, so it has no
-judge and is reported as *not judged* — a skip is never counted as a pass.
-`verify-bitunix.mjs` substitutes three checks that share no arithmetic with the
-code they test: the 24 h spot volume recomputed from 15-minute candles instead
-of hourly ones (**ratio 1.0011**, so the candle-summing that replaces the
-non-existent spot ticker is sound), the futures websocket book against the
-venue's own REST snapshot (**mid identical, size ratio 0.991**), and the spot
-mid against the median of three other venues (**-0.019%**). None of them is a
-second implementation, so they bound the error rather than confirm the data.
+whole-book stream), both with the mid identical to four decimals. Bitunix is absent from ccxt — rechecked against 4.5.78, the current release — so
+`crosscheck-ccxt` reports it as *not judged*, and a skip is never counted as a
+pass. `verify-bitunix.mjs` covers it in two layers.
+
+Three checks that share no arithmetic with the code they test, but are still our
+own reading of the venue, so they bound the error: the 24 h spot volume
+recomputed from 15-minute candles instead of hourly ones (**ratio 1.0000**, so
+the candle-summing that replaces the non-existent spot ticker is sound), the
+futures websocket book against the venue's own REST snapshot (**mid identical,
+size ratio 1.010**), and the spot mid against the median of three other venues
+(**+0.000%**). To those is added the adapter's continuous `drift` — the same two
+transports compared every 5 s — judged on the **median of ten readings at 2%**.
+That threshold is the widest the data supports and no wider: sampled every 5 s
+for 20 minutes, BTCUSDT runs median 0.288% / max 2.76% while SOLUSDT runs 3.42% /
+16.73%, so a single global number would be silent on one and permanently
+breached on the other.
+
+And one check that *is* a second implementation. CoinGecko runs its own
+integration against Bitunix, so it reads the same exchange with different code
+on its own schedule: the spot mid comes in at **+0.132%** against what it sees,
+the perp mid at **+0.092%**, the spot 24 h volume at **ratio 1.0041** — the
+figure that previously had no judge whatsoever — and the perp volume at
+**1.0061**. It publishes no order book, so **depth remains judged only by the
+venue against itself**. An unreachable or rate-limited judge reports INCONC and
+exits non-zero, exactly as a ccxt failure does.
 
 A single sample of a thin book can land 2x off simply because the book moved
 between the two reads, so one ratio proves little. `--repeat N` holds one socket

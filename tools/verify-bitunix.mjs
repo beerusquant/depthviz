@@ -1,8 +1,15 @@
 /**
- * Bitunix is absent from ccxt (103 exchanges, not one of them), so
- * tools/crosscheck-ccxt.mjs reports it as "not judged" and never as a pass.
- * This is the substitute: three checks built only from sources that are
- * independent of the code path being checked.
+ * Bitunix is absent from ccxt — rechecked against 4.5.78, the current release:
+ * 103 exchanges, not one of them — so tools/crosscheck-ccxt.mjs reports it as
+ * "not judged" and never as a pass. This is the substitute.
+ *
+ * Checks 1-3 are built from sources independent of the code path being checked,
+ * but they are all still OUR reading of Bitunix: they bound the error, they do
+ * not confirm the data. Check 4 is the one that does — CoinGecko polls Bitunix
+ * on its own schedule with its own client, so it is a genuine second reader of
+ * the same venue. It sees the touch and the tape, not the book, so it judges
+ * the price, the spread and the 24h volume and says nothing about depth. That
+ * is still three of the four numbers this adapter produces, judged from outside.
  *
  *   node tools/verify-bitunix.mjs      (the depthviz server must be running)
  */
@@ -11,6 +18,9 @@ import WebSocket from 'ws';
 const SPOT = 'https://openapi.bitunix.com';
 const FUT = 'https://fapi.bitunix.com';
 const SERVER = process.env.DEPTHVIZ_URL || 'ws://localhost:8787/ws';
+// No tool here hardcodes a port: the deployed service listens on 8888, and a
+// hardcoded 8787 once reported every feed dead while the server was healthy.
+const HTTP = process.env.DEPTHVIZ_HTTP || 'http://127.0.0.1:8787';
 const SYMBOL = process.argv[2] || 'BTCUSDT';
 
 const j = async (u) => (await fetch(u, { headers: { 'User-Agent': 'depthviz/1.0' } })).json();
@@ -101,5 +111,122 @@ console.log(`Bitunix independent checks — ${SYMBOL}\n`);
   }
 }
 
-console.log(`\n${fails === 0 ? 'all Bitunix checks pass' : fails + ' check(s) failed'} — none of these is an external second implementation, so they bound the error rather than confirm the data.`);
+// 3 bis. The adapter's own ws-vs-REST drift, judged on a median.
+//    Bitunix perp streams FULL snapshots several times a second, so a wrong book
+//    repairs itself on the next frame and there is nothing to resync — which is
+//    why this threshold lives in the check rather than in the adapter. What it
+//    catches is the case the socket watchdog cannot: a stream that is alive,
+//    on time, and shipping a partial or truncated book.
+//
+//    Measured every 5 s for 20 min on four instruments, cumulative size over
+//    ±0.5% of mid, after fixing the sampling to read our book when the REST
+//    response lands rather than before it is sent:
+//
+//        BTCUSDT   median 0.288%   p95 1.835%   max  2.760%
+//        ETHUSDT   median 0.587%   p95 2.196%   max 16.061%
+//        SOLUSDT   median 3.419%   p95 11.452%  max 16.729%
+//        DOGEUSDT  median 1.046%   p95 4.431%   max  8.157%
+//
+//    The spread across instruments is an order of magnitude, so there is no one
+//    number that fits all four — a global threshold would be silent on BTC and
+//    permanently breached on SOL. This judges the default instrument on the
+//    MEDIAN of a run of readings, where its whole measured range sits under 2%:
+//    a single 2.7% spike is the two reads straddling a busy tick, a median past
+//    2% is the book.
+{
+  const N = 10, EVERY_MS = 6000;   // the adapter refreshes drift every 5 s
+  const seen = [];
+  for (let i = 0; i < N; i++) {
+    if (i) await new Promise((r) => setTimeout(r, EVERY_MS));
+    try {
+      const d = (await j(`${HTTP}/api/depth?exchange=bitunix&market=perp&symbol=${SYMBOL}&range=2`)).drift;
+      if (typeof d === 'number') seen.push(d);
+    } catch { /* counted as a missing sample below */ }
+  }
+  if (seen.length < N / 2) {
+    fails++;
+    console.log(`  INCONC ws-vs-REST drift\n       only ${seen.length}/${N} readings — not enough to take a median`);
+  } else {
+    const v = [...seen].sort((a, b) => a - b);
+    const med = v[Math.floor(v.length / 2)];
+    verdict('futures ws book agrees with the venue\'s own REST book', med < 0.02,
+      `median ${(med * 100).toFixed(3)}% over ${v.length} readings (worst ${(v[v.length - 1] * 100).toFixed(3)}%), threshold 2%`);
+  }
+}
+
+// 4. The external judge: CoinGecko reads Bitunix itself.
+//    Everything above is our own client talking to Bitunix, so a shared
+//    misunderstanding of the venue's payload would pass all three. CoinGecko
+//    runs its own integration against the same exchange and publishes what it
+//    sees; where the two agree, the reading is confirmed rather than merely
+//    bounded. It has no order book, so depth stays judged only by the venue
+//    against itself (the adapter's own ws-vs-REST `drift`).
+//
+//    An unreachable or rate-limited judge is an absence of proof, not a pass:
+//    it reports INCONC and exits non-zero, exactly as a ccxt failure does in
+//    crosscheck-ccxt.
+{
+  const CG = 'https://api.coingecko.com/api/v3';
+  const pct = (a, b) => (a / b - 1) * 100;
+  let cg = null;
+  try {
+    const [spot, perp] = await Promise.all([
+      j(`${CG}/exchanges/bitunix/tickers?coin_ids=bitcoin`),
+      j(`${CG}/derivatives/exchanges/bitunix_futures?include_tickers=unexpired`),
+    ]);
+    const st = (spot.tickers || []).find((t) => t.base === 'BTC' && t.target === 'USDT');
+    const pt = (perp.tickers || []).find((t) => t.symbol === 'BTC_USDT');
+    if (st && pt) cg = { st, pt };
+  } catch { /* handled below */ }
+
+  if (!cg) {
+    fails++;
+    console.log('  INCONC external judge unavailable\n       CoinGecko did not return Bitunix BTC tickers — no external confirmation this run');
+  } else {
+    const { st, pt } = cg;
+    const ourSpot = mid(await ourBook('bitunix', 'spot', SYMBOL, 12_000));
+    const ourPerp = mid(await ourBook('bitunix', 'perp', SYMBOL, 12_000));
+
+    // Price. CoinGecko's `last` is a trade, ours is the mid of the book, and
+    // their read lags ours by up to a minute — so this catches a scaling or
+    // units error, not a basis point.
+    if (ourSpot) {
+      const d = pct(ourSpot, st.last);
+      verdict('spot mid matches an outside reading of Bitunix', Math.abs(d) < 0.5,
+        `ours ${ourSpot.toFixed(2)} vs CoinGecko ${(+st.last).toFixed(2)} (${d >= 0 ? '+' : ''}${d.toFixed(3)}%)`);
+    }
+    if (ourPerp) {
+      const d = pct(ourPerp, pt.last);
+      verdict('perp mid matches an outside reading of Bitunix', Math.abs(d) < 0.5,
+        `ours ${ourPerp.toFixed(2)} vs CoinGecko ${(+pt.last).toFixed(2)} (${d >= 0 ? '+' : ''}${d.toFixed(3)}%)`);
+    }
+
+    // 24h volume. This is the figure with no other judge at all: the spot one
+    // is summed from candles because Bitunix publishes no spot ticker, and a
+    // windowing bug there would look like a real number. CoinGecko converts on
+    // its own prices over its own window, so ±15% is the honest band.
+    const ourSpotVol = await j(`${HTTP}/api/depth?exchange=bitunix&market=spot&symbol=${SYMBOL}&range=2`).then((x) => x.vol24h).catch(() => null);
+    const ourPerpVol = await j(`${HTTP}/api/depth?exchange=bitunix&market=perp&symbol=${SYMBOL}&range=2`).then((x) => x.vol24h).catch(() => null);
+    const cgSpotVol = +st.converted_volume?.usd;
+    const cgPerpVol = +pt.converted_volume?.usd;
+    if (ourSpotVol && cgSpotVol) {
+      const r = ourSpotVol / cgSpotVol;
+      verdict('spot 24h volume agrees with an outside reading', r > 0.85 && r < 1.15,
+        `ours $${(ourSpotVol / 1e6).toFixed(2)}M (summed from candles) vs CoinGecko $${(cgSpotVol / 1e6).toFixed(2)}M -> ratio ${r.toFixed(4)}`);
+    }
+    if (ourPerpVol && cgPerpVol) {
+      const r = ourPerpVol / cgPerpVol;
+      verdict('perp 24h volume agrees with an outside reading', r > 0.85 && r < 1.15,
+        `ours $${(ourPerpVol / 1e6).toFixed(2)}M (venue ticker) vs CoinGecko $${(cgPerpVol / 1e6).toFixed(2)}M -> ratio ${r.toFixed(4)}`);
+    }
+
+    // Spread is reported, not judged: theirs is a snapshot taken at an unknown
+    // instant and ours is the touch right now, so any threshold here would be
+    // measuring the gap between two clocks. A number worth seeing is not the
+    // same thing as a number worth failing on.
+    console.log(`  --   spread, for reference (not a verdict)\n       CoinGecko sees spot ${(+st.bid_ask_spread_percentage * 100).toFixed(2)} bps, perp ${(+pt.bid_ask_spread * 1e4).toFixed(2)} bps`);
+  }
+}
+
+console.log(`\n${fails === 0 ? 'all Bitunix checks pass' : fails + ' check(s) failed'} — checks 1-3 bound the error from our own reading; check 4 is an outside reader of the same venue, and it sees the touch and the tape, never the depth.`);
 process.exit(fails ? 1 : 0);

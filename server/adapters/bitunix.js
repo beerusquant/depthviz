@@ -100,8 +100,14 @@ export default {
     const measure = async () => {
       if (stopped) return;
       try {
-        const b = lastBook;
         const r = await fetchJson(`${FUT}/api/v1/futures/market/depth?symbol=${encodeURIComponent(s)}&limit=max`);
+        // The ws book is read AFTER the response lands, not before it is sent.
+        // Our stream is continuous and theirs is a point-in-time read, so the
+        // pair is only comparable at one instant; taking ours first puts the
+        // whole request round-trip into the skew and turns a measurement of the
+        // book into a measurement of the network. The crosscheck learned this
+        // the same way.
+        const b = lastBook;
         const d = r.data || {};
         const rb = (d.bids || []).map((x) => [+x[0], +x[1]]);
         const ra = (d.asks || []).map((x) => [+x[0], +x[1]]);

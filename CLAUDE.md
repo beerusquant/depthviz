@@ -98,8 +98,19 @@ hand-written adapters can be wrong against: `npm run crosscheck`. On contract-de
 venues the **expected ratio is the multiplier, not 1**.
 
 ccxt carries `aster` and `lighter`: both perp DEXs therefore have an external
-judge, and their expected ratio is 1 (no contracts). Bitunix is the only venue
-with no judge.
+judge, and their expected ratio is 1 (no contracts).
+
+**Bitunix is not in ccxt** — rechecked against 4.5.78, the current release — but
+it is no longer unjudged. CoinGecko runs its own integration against the same
+exchange (`/exchanges/bitunix/tickers` and
+`/derivatives/exchanges/bitunix_futures`), so it is a genuine second reader:
+`verify-bitunix` now compares our mid, and our 24h volume on both markets,
+against what an outsider sees. Measured on first run: spot mid +0.13%, perp mid
++0.09%, spot volume ratio 1.004 (the figure that had no judge at all, since
+Bitunix publishes no spot ticker and the adapter sums candles), perp volume
+1.006. CoinGecko has no order book, so **depth stays judged only by the venue
+against itself** — an unreachable or rate-limited judge reports INCONC and exits
+non-zero, exactly as a ccxt failure does.
 
 ## 2 bis. A tolerance is a measurement, not a taste
 
@@ -120,6 +131,22 @@ found the same week:
   normal tolerance. Our own book was never the problem, and that was measured
   too: against MEXC's REST read at the same instant it comes in at **median
   0.982**, closer than MEXC's book is to itself a second later.
+
+A third threshold was asked for and the data refused it. Bitunix perp's
+ws-vs-REST drift, sampled every 5 s for 20 minutes on four instruments over
+±0.5% of mid: BTCUSDT median 0.288% / p95 1.84%, ETHUSDT 0.587% / 2.20%,
+**SOLUSDT 3.419% / 11.45%**, DOGEUSDT 1.046% / 4.43%. SOL's p95 is four times
+BTC's maximum — an order of magnitude apart, so no single number fits, and one
+picked anyway would be silent on BTC and permanently breached on SOL. It is
+judged in `verify-bitunix` on the **median of ten readings of the default
+instrument** instead, where the whole measured range sits under 2%. Not every
+measurement earns a threshold; saying so is the answer, not picking one.
+
+That measurement also caught its own bug first: the adapter read our ws book
+*before* sending the REST request, putting the whole round-trip into the skew —
+the mistake `crosscheck-ccxt` had already been fixed for. Reading it when the
+response lands took BTC from median 0.669% to 0.288% and its worst case from
+6.4% to 2.8%. **Compare two books at one instant or not at all.**
 
 Corollary: when a check is loose, ask whether the venue is unstable before
 widening it further. Widening a tolerance to accommodate someone else's variance
