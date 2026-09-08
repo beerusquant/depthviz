@@ -172,8 +172,25 @@ export function draw(canvas, st) {
     ctx.restore();
   }
 
-  // --- raw level histogram (drawn under the curves) ----------------------
+  // --- size-per-bin histogram (its own scale, stated) --------------------
+  //
+  // These bars are where the size actually sits — the walls and the gaps the
+  // cumulative curve smooths away — and they were unreadable, because they were
+  // drawn against the cumulative axis: a single bin is a fraction of a percent
+  // of the total, so every bar was a few pixels of nothing.
+  //
+  // They get their own scale, confined to the bottom of the plot. A second
+  // vertical scale is exactly the sort of thing that makes a chart lie, so it
+  // is not left implicit: the band is ruled off, and its top carries the value
+  // it represents. One number, always drawn, at every viewport width.
+  const BAR_BAND = 0.28;
   const bw = W / 2 / m.nbins;
+  let barMax = 0;
+  for (let i = 0; i < m.nbins; i++) {
+    if (m.bid.bins[i] > barMax) barMax = m.bid.bins[i];
+    if (m.ask.bins[i] > barMax) barMax = m.ask.bins[i];
+  }
+  const barTop = y0 - H * BAR_BAND;
   const bar = (bins, sign, color) => {
     ctx.fillStyle = color;
     for (let i = 0; i < m.nbins; i++) {
@@ -181,12 +198,28 @@ export function draw(canvas, st) {
       if (!(v > 0)) continue;
       const p0 = sign * (i / m.nbins) * range;
       const px = sign < 0 ? x(p0) - bw : x(p0);
-      const h = (v / yMax) * H;
+      const h = (v / barMax) * H * BAR_BAND;
       ctx.fillRect(px + 0.5, y0 - h, Math.max(1, bw - 1), h);
     }
   };
-  bar(m.bid.bins, -1, T.bidBar);
-  bar(m.ask.bins, 1, T.askBar);
+  if (barMax > 0) {
+    bar(m.bid.bins, -1, T.bidBar);
+    bar(m.ask.bins, 1, T.askBar);
+    ctx.save();
+    ctx.setLineDash([2, 4]);
+    ctx.strokeStyle = T.grid;
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.moveTo(PAD.l, Math.round(barTop) + 0.5);
+    ctx.lineTo(PAD.l + W, Math.round(barTop) + 0.5);
+    ctx.stroke();
+    ctx.restore();
+    ctx.font = `${L.tiny ? 9 : 10}px ui-monospace, Menlo, monospace`;
+    ctx.textAlign = 'right';
+    ctx.fillStyle = T.axis;
+    ctx.fillText(`bars: ${fmtUsd(barMax)} / ${(2 * range / m.nbins).toFixed(range >= 2 ? 2 : 3)}% bin`,
+      PAD.l + W - 4, barTop - 7);
+  }
 
   // --- cumulative curves -------------------------------------------------
   const curve = (pts, line, fill) => {
@@ -259,8 +292,8 @@ function drawLegend(ctx, T, right, yy) {
     ['Bid VWAP', T.cyan, 'dash'],
     ['Ask VWAP', T.orange, 'dash'],
     ['Mid', T.mid, 'dash'],
-    ['Bid Lvls', T.bidBar, 'box'],
-    ['Ask Lvls', T.askBar, 'box'],
+    ['Bid size/bin', T.bidBar, 'box'],
+    ['Ask size/bin', T.askBar, 'box'],
   ];
   ctx.font = '10px ui-monospace, Menlo, monospace';
   ctx.textAlign = 'left';

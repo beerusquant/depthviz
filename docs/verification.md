@@ -17,6 +17,7 @@ in CI on Node 20 and 22 on every push:
 | `test-book` | `BookSide.applySnapshot`: whether accumulated depth survives a resync, and when it must not |
 | `test-stitch` | the Hyperliquid layer reconciliation and its cumulative identity |
 | `test-trim` | that reducing the payload preserves cumulative quantity, notional, VWAP **and reach** |
+| `test-reconnect` | the socket liveness watchdog: a path that proves nothing is dropped, and a quiet book whose venue still answers a ping is left alone |
 | `test-diff-book` | the sequencing engine five feeds share: the anchor after a snapshot, gap detection, resync — replayed from ids captured live on Binance perp |
 | `test-metrics` | every number in the panel — depth, VWAP, imbalance, the truncation flags |
 

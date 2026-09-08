@@ -1,7 +1,21 @@
 import { fetchJson, ttlCache, reconnectingWs, BookSide, coalesce, PUBLISH_MS } from '../util.js';
 
 const REST = 'https://api.exchange.coinbase.com';
-const WS = 'wss://ws-feed.exchange.coinbase.com';
+// Advanced Trade's `level2` channel, not Exchange's `level2_batch`.
+//
+// Both are public and both stream the whole book, but only this one numbers its
+// frames. Exchange's feed carries no sequence at all: every other streaming
+// venue here chains its updates (U/u/pu, seqId/prevSeqId, begin_nonce) so a
+// dropped frame forces a resync, and on Coinbase a lost update simply left a
+// wrong level standing with nothing to say so — the one venue where the book
+// could be silently wrong forever. `sequence_num` closes that.
+//
+// It counts frames per CONNECTION, not per channel, so the subscription
+// acknowledgement consumes one too and it has to be tracked on every message.
+// Measured on 2026-09-08: BTC-USD opens with a 43 892-level snapshot, ETH-USDC
+// with 20 700, side labels are `bid`/`offer`, and the host answers an RFC6455
+// ping — so the idle watchdog can prove this socket alive.
+const WS = 'wss://advanced-trade-ws.coinbase.com';
 
 const products = ttlCache(async () => {
   const rows = await fetchJson(`${REST}/products`);
@@ -37,31 +51,60 @@ export default {
   open(market, s, opts, emit, status) {
     const bids = new BookSide(true);
     const asks = new BookSide(false);
-    let ready = false;
+    let seq = null;          // null => waiting for the snapshot
+    let resubTimer = null;
+    let closed = false;
 
-    const publish = coalesce((ts) => emit({ bids: bids.toArray(), asks: asks.toArray(), ts, source: 'ws' }), PUBLISH_MS);
+    const publish = coalesce((ts) => emit({
+      bids: bids.toArray(), asks: asks.toArray(), ts, source: 'ws',
+    }), PUBLISH_MS);
+
+    const sub = (send, type) => send({ type, product_ids: [s], channel: 'level2' });
+    // A gap means levels changed unseen, and the only cure the venue offers is a
+    // fresh snapshot: drop the channel, then take it again.
+    const resubscribe = (send) => {
+      if (closed || resubTimer) return;
+      seq = null;
+      status('reconnecting', 'Coinbase l2 sequence gap, resyncing');
+      sub(send, 'unsubscribe');
+      resubTimer = setTimeout(() => {
+        resubTimer = null;
+        if (!closed) sub(send, 'subscribe');
+      }, 500);
+    };
 
     const conn = reconnectingWs(WS, {
       onOpen: (send) => {
-        ready = false; bids.clear(); asks.clear();
-        send({ type: 'subscribe', product_ids: [s], channels: ['level2_batch'] });
+        seq = null; bids.clear(); asks.clear();
+        sub(send, 'subscribe');
       },
-      onMessage: (raw) => {
+      onMessage: (raw, send) => {
         const m = JSON.parse(raw.toString());
         if (m.type === 'error') { status('error', `Coinbase: ${m.message}`); return; }
-        if (m.type === 'snapshot') {
-          bids.clear(); asks.clear();
-          for (const r of m.bids) bids.set(r[0], r[1]);
-          for (const r of m.asks) asks.set(r[0], r[1]);
-          ready = true;
-          publish(null); // the snapshot frame carries no venue time
-        } else if (m.type === 'l2update' && ready) {
-          for (const [side, px, sz] of m.changes) (side === 'buy' ? bids : asks).set(px, sz);
-          publish(m.time ? Date.parse(m.time) : null);
+        const n = m.sequence_num;
+        if (Number.isFinite(n)) {
+          // Every frame is numbered, including the ones on other channels, so
+          // the counter advances on control frames too.
+          if (seq !== null && n !== seq + 1) { resubscribe(send); return; }
+          if (seq !== null || m.channel !== 'l2_data') seq = n;
         }
+        if (m.channel !== 'l2_data') return;
+        // The venue stamps every frame, snapshot included.
+        const ts = m.timestamp ? Date.parse(m.timestamp) : null;
+        let touched = false;
+        for (const ev of m.events || []) {
+          if (ev.type === 'snapshot') { bids.clear(); asks.clear(); seq = n; }
+          else if (seq === null) continue;   // update before any snapshot
+          for (const u of ev.updates || []) {
+            (u.side === 'bid' ? bids : asks).set(u.price_level, u.new_quantity);
+          }
+          touched = true;
+        }
+        if (touched && seq !== null) publish(Number.isFinite(ts) ? ts : null);
       },
-      onStatus: status,
+      onStatus: (st, detail) => { if (st !== 'open') status(st, detail); },
     }, { pingMs: 20_000 });
-    return { close() { publish.cancel(); conn.close(); } };
+
+    return { close() { closed = true; publish.cancel(); clearTimeout(resubTimer); conn.close(); } };
   },
 };

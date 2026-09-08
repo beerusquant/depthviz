@@ -80,14 +80,50 @@ export default {
 
     // Futures: the public websocket streams the whole book (15k+ levels) as a
     // full snapshot several times a second — no diff bookkeeping needed.
+    //
+    // Bitunix is the one venue with no external judge: it is absent from all
+    // 103 ccxt exchanges, so nothing outside this repo ever reads its book. The
+    // venue does publish a second, independent view of the same book over REST,
+    // and comparing the two is the only continuous integrity check available
+    // here — the same shape as OKX's, for the same reason. `drift` is the
+    // cumulative-size disagreement over ±0.5% of mid; the panel and /api/depth
+    // carry it, so a stream that starts lying stops being invisible.
+    let drift = null;
+    let stopped = false;
+    let lastBook = null;
+
+    const cumTo = (rows, mid, sign, band) => {
+      let q = 0;
+      for (const [p, sz] of rows) { if (sign * (p - mid) / mid * 100 > band) break; q += sz; }
+      return q;
+    };
+    const measure = async () => {
+      if (stopped) return;
+      try {
+        const b = lastBook;
+        const r = await fetchJson(`${FUT}/api/v1/futures/market/depth?symbol=${encodeURIComponent(s)}&limit=max`);
+        const d = r.data || {};
+        const rb = (d.bids || []).map((x) => [+x[0], +x[1]]);
+        const ra = (d.asks || []).map((x) => [+x[0], +x[1]]);
+        if (b && rb.length && ra.length) {
+          const mw = (b.bids[0][0] + b.asks[0][0]) / 2;
+          const mr = (rb[0][0] + ra[0][0]) / 2;
+          const ws = cumTo(b.bids, mw, -1, 0.5) + cumTo(b.asks, mw, 1, 0.5);
+          const rest = cumTo(rb, mr, -1, 0.5) + cumTo(ra, mr, 1, 0.5);
+          drift = rest > 0 ? Math.abs(ws - rest) / rest : null;
+        }
+      } catch { /* the ws book is unaffected by a failed REST read */ }
+      if (!stopped) setTimeout(measure, 5000);
+    };
     // The raw arrays are handed to the coalescer untouched: on BTC this book
     // carries 25 000 levels and mapping them is the expensive half, so it must
     // happen on the frame that is actually shipped, not on every frame received.
-    const publish = coalesce((b, a, ts) => emit({
-      bids: b.map((r) => [+r[0], +r[1]]),
-      asks: a.map((r) => [+r[0], +r[1]]),
-      ts, source: 'ws',
-    }), PUBLISH_MS);
+    const publish = coalesce((b, a, ts) => {
+      const bids = b.map((r) => [+r[0], +r[1]]);
+      const asks = a.map((r) => [+r[0], +r[1]]);
+      if (bids.length && asks.length) lastBook = { bids, asks };
+      emit({ bids, asks, ts, source: 'ws', drift });
+    }, PUBLISH_MS);
     const conn = reconnectingWs(FUT_WS, {
       onOpen: (send) => send({ op: 'subscribe', args: [{ symbol: s, ch: 'depth_books' }] }),
       onMessage: (raw) => {
@@ -98,6 +134,7 @@ export default {
       },
       onStatus: status,
     }, { pingMs: 20_000, pingPayload: JSON.stringify({ op: 'ping', ping: Math.floor(Date.now() / 1000) }) });
-    return { close() { publish.cancel(); conn.close(); } };
+    setTimeout(measure, 5000);
+    return { close() { stopped = true; publish.cancel(); conn.close(); } };
   },
 };

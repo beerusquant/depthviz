@@ -45,6 +45,14 @@ perp, field 6 of the spot protobuf, all three dropped by the decoders. Both feed
 now measure ~90–120 ms. The delta is displayed raw, negative included: a negative
 one is clock skew against the exchange, which is information, not noise.
 
+Coinbase used to be the one exception to gap detection and no longer is: its
+Exchange `level2_batch` feed carried no sequence number at all, so a dropped
+update left a wrong level standing with nothing to say so. Advanced Trade's
+`level2` channel is equally public and numbers every frame — per **connection**,
+not per channel, so the subscription acknowledgement consumes one too and the
+counter must be tracked on every message, control frames included. Same book
+(22 433/21 457 levels on BTC-USD), venue clock down from ~43 ms to ~5 ms.
+
 Corollary: `state` is not health. It is set by the last status event, so a feed
 that reconnects every thirty seconds reads `live` between drops. The measurement
 that cannot lie is the age of the last book — `/api/feeds` reports it, and the
@@ -92,6 +100,31 @@ venues the **expected ratio is the multiplier, not 1**.
 ccxt carries `aster` and `lighter`: both perp DEXs therefore have an external
 judge, and their expected ratio is 1 (no contracts). Bitunix is the only venue
 with no judge.
+
+## 2 bis. A tolerance is a measurement, not a taste
+
+Every threshold in this repo has to come from a distribution somebody sampled,
+and the sample has to be written down next to it. Two were guesses and both were
+found the same week:
+
+- **OKX's ws-vs-REST drift trigger was 15%.** Sampled once a second for ~3
+  minutes on BTC-USDT spot, BTC-USDT-SWAP and ETH-USDT-SWAP (n=169 each), the
+  real distribution is **median 0.000%, p95 ≤ 0.093%, max 6.24%**. With three
+  consecutive breaches required, 15% could not fire on anything short of a
+  catastrophe. It is 3% now — thirty times the p95, five times tighter than the
+  guess, and a state no spike in that sample ever reached three times running.
+- **MEXC spot was judged on ±0.5% with a 0.5–2.0 tolerance**, which is not a
+  check, it is a shrug. The venue's own REST book, read twice one second apart,
+  disagrees with itself by p95/p05 of **1.51x at ±0.25% and 8.89x at ±2%** — so
+  past ±0.25% MEXC is simply not a reference. It is judged at ±0.25% now, at the
+  normal tolerance. Our own book was never the problem, and that was measured
+  too: against MEXC's REST read at the same instant it comes in at **median
+  0.982**, closer than MEXC's book is to itself a second later.
+
+Corollary: when a check is loose, ask whether the venue is unstable before
+widening it further. Widening a tolerance to accommodate someone else's variance
+buys silence, not confidence — and the wide band is what made that check blind
+to anything under a 2x error.
 
 ## 3. A check that cries wolf is worse than no check
 
@@ -197,6 +230,7 @@ A change that was not executed does not exist. Depending on what you touch:
 | `BookSide`, `hub.trim`, a resync, `diff-book` sequencing | `npm test` (deterministic, no network) |
 | an adapter, a unit conversion | `npm run crosscheck` **and** `node tools/verify-conversions.mjs` |
 | Bitunix (absent from ccxt) | `npm run verify:bitunix` |
+| `reconnectingWs`, a socket's lifecycle | `node tools/test-reconnect.mjs` — both halves: a dead path is dropped, a quiet-but-answering one is not |
 | the UI, the layout, the transport | `node tools/smoke-feeds.mjs`, and `smoke-ui.mjs` if the rendering moves |
 | `shared/metrics.js`, `/api/depth` | `npm test` **and** a `curl` of the route — the browser and the API share one implementation, so a change to it moves both |
 

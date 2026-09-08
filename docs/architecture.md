@@ -104,6 +104,17 @@ below was measured against a live venue, not assumed.
    +1.85%, and the curve used to stop there, drawing a truncated-looking book
    under a truncation note that (correctly) never fired. Draw the known value
    where it is known; stop where it is not.
+5 bis. **Coinbase moved from Exchange's `level2_batch` to Advanced Trade's
+   `level2`.** Both are public and both stream the whole book, but only the
+   second numbers its frames. Exchange's feed carried no sequence at all, which
+   made Coinbase the one venue where a dropped update could leave a wrong level
+   standing forever with nothing to say so — every other feed here chains its
+   updates and resyncs on a gap. `sequence_num` counts frames per *connection*
+   rather than per channel, so the subscription acknowledgement consumes one too
+   and it is tracked on every message. Measured on the switch: the same book
+   (22 433/21 457 levels on BTC-USD), and the venue clock tightened from ~43 ms
+   to ~5 ms because Advanced Trade stamps every frame including the snapshot.
+
 6. **OKX needs two transports to reach past +-0.3%.** The `books` websocket
    channel is capped at 400 levels — ~+-0.28% of mid on BTC. REST
    `books-full` returns 5 000 (~+-1.3%) but is not streamed, and the deeper
@@ -127,8 +138,20 @@ below was measured against a live venue, not assumed.
    and the 1 s `books-full` poll overlap completely, and nothing compared them.
    Cumulative size over that overlap is now measured on every poll — the kind
    of drift a sequence counter cannot catch. Three consecutive readings past
-   15% force a resubscribe. Measured live: **0.00-0.18%**, i.e. the incremental
-   book and the venue's own full book agree.
+   **3%** force a resubscribe, and that number comes from the distribution
+   rather than from taste: sampled once a second for ~3 minutes on BTC-USDT
+   spot, BTC-USDT-SWAP and ETH-USDT-SWAP (n=169 each), the drift runs **median
+   0.000%, p95 ≤ 0.093%, max 6.24%** — exact agreement, with rare single spikes
+   where the two reads straddle a busy tick. The threshold it replaced (15%)
+   was never measured, and with the run requirement it could not fire on
+   anything short of a catastrophe.
+
+   Bitunix now carries the same measurement for the same reason: it is absent
+   from all 103 ccxt exchanges, so its stream has no external judge at all. Its
+   websocket book is compared every 5 s against the venue's own REST book over
+   ±0.5% of mid and the result is published as `drift`. It only reports — there
+   is no calibrated threshold to act on yet, and inventing one would be the
+   mistake this paragraph exists to record.
 
    This exists *because* the venue's own check does not. OKX still sends a
    `checksum` field on the `books` channel and it is **`0` on every frame**,
@@ -184,12 +207,9 @@ invocation — a fresh book must never be paired with an older venue clock.
 Stated plainly, because a limit nobody wrote down is a limit somebody will
 discover as a bug:
 
-- **Coinbase's `level2_batch` carries no sequence number.** Every other
-  streaming venue here chains its updates (`U`/`u`/`pu`, `seqId`/`prevSeqId`,
-  `begin_nonce`), so a dropped frame is detected and forces a resync. On
-  Coinbase it cannot be: a lost update would leave a wrong level with nothing
-  to say so. The socket's liveness is proven (the idle watchdog), the ordering
-  is not.
+- **Nothing here is a claim about hidden liquidity.** Every venue publishes the
+  resting book it chooses to publish; iceberg and hidden size are invisible to
+  this tool by construction, on all eight.
 - **A book is only as fresh as the venue is talkative.** `tsRecv` and the age on
   the badge are the honest answer, and they are deliberately not colour-coded:
   on an illiquid pair a two-minute-old top of book is correct, not stale.
@@ -208,8 +228,7 @@ the constraints on it are worth stating.
 
 **Two clocks, never conflated.** A book carries `tsVenue` — the exchange's own
 event time — and `tsRecv`, when the frame reached this process. `tsVenue` is
-`null` wherever the venue stamps nothing: a REST poll, Coinbase's opening frame,
-every snapshot. It used to be filled with `Date.now()` on those paths, which made
+`null` wherever the venue stamps nothing: a REST poll, Binance spot's snapshot. It used to be filled with `Date.now()` on those paths, which made
 a feed with no clock indistinguishable from one with a perfect one, and printed a
 latency of zero that nobody would think to question. The rule now is that an
 adapter reports the venue's time or `null`, and the hub adds its own — so

@@ -4,7 +4,18 @@ const REST = 'https://www.okx.com';
 const WS = 'wss://ws.okx.com:8443/ws/v5/public';
 const instType = (m) => (m === 'perp' ? 'SWAP' : 'SPOT');
 
-const DRIFT_TOLERANCE = 0.15;   // cumulative-size disagreement over the overlap
+// Set from the measured distribution, not from a guess. Sampled once a second
+// for ~3 minutes on BTC-USDT spot, BTC-USDT-SWAP and ETH-USDT-SWAP (n=169 each):
+//
+//     median  0.000%    p95 <= 0.093%    p99 0.84-6.24%    max 6.24%
+//
+// So the healthy state is exact agreement, with rare single spikes when the two
+// reads land either side of a busy tick. The old 15% was a number nobody had
+// measured, and combined with the run requirement below it could not fire on
+// anything short of a catastrophe. 3% is thirty times the p95 and still five
+// times tighter, and three CONSECUTIVE readings past it is a state no spike in
+// that sample ever produced.
+const DRIFT_TOLERANCE = 0.03;   // cumulative-size disagreement over the overlap
 const DRIFT_BREACHES = 3;       // consecutive breaches before forcing a resync
 
 const instruments = ttlCache(async (market) => {

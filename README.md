@@ -25,7 +25,7 @@ therefore deliberate: `HOST=0.0.0.0 PORT=8888 npm start`.
 | MEXC | 1 982 | 1 129 | **WS** protobuf (spot) + **WS** JSON (perp), REST snapshot | 2 000 / 1 500 lv, ±5% / ±3% | contract sizes converted via `contractSize`; 8s poll watchdog behind both |
 | Bitunix | 844 | 735 | REST poll 1s (spot) / **WS** `depth_books` (perp) | 50 lv ±0.05% / 16 000 lv **±12%** | spot book is capped by the exchange, see [tradeoffs](docs/architecture.md) |
 | Hyperliquid | 326 | 177 | **WS** `l2Book` ×6 stitched | ~88 lv, **±11%** | six parallel `nSigFigs`/`mantissa` layers reconciled on cumulative quantity, see [tradeoffs](docs/architecture.md) |
-| Coinbase | 521 | — | **WS** `level2_batch` (snapshot + updates) | ~22 000 lv, whole book | spot only; the PERP option greys it out |
+| Coinbase | 521 | — | **WS** Advanced Trade `level2` (sequenced snapshot + updates) | ~22 000 lv, whole book | spot only; the PERP option greys it out |
 | Aster | — | 553 | **WS** diff depth @100ms + REST snapshot | 1 000 lv snapshot ±2.7%, grows with uptime (±5.9% after 9 s) | perp DEX; Binance-futures API dialect, so it runs the shared `diff-book.js` engine |
 | Lighter | — | 214 | **WS** whole-book snapshot + nonce-chained diffs | ~2 900 lv, past ±50% (clipped to ±12%) | perp DEX; markets addressed by numeric `market_id`, resolved from the symbol |
 
@@ -113,8 +113,8 @@ curl 'http://127.0.0.1:8787/api/depth?exchange=okx&market=perp&symbol=BTC-USDT-S
 ```
 
 **Two clocks, never conflated.** `tsVenue` is the exchange's own event time and
-is `null` on the feeds that stamp nothing (a REST poll, Coinbase's opening
-frame), so `venueLatencyMs` is a measurement or it is absent — never a zero
+is `null` on the feeds that stamp nothing (a REST poll, Binance spot's
+snapshot), so `venueLatencyMs` is a measurement or it is absent — never a zero
 standing in for one. `tsRecv` is when the frame reached this process, so
 `ageMs` is staleness. `reach` says how far the venue's book actually went, so a
 caller can tell a thin book from a truncated one without reading the chart.
@@ -126,6 +126,10 @@ caller can tell a thin book from a truncated one without reading the chart.
 | `GET /api/catalog` | venues, markets and transports |
 | `GET /api/feeds` | per-feed health: book age, venue latency, reconnects, errors, dropped frames |
 | `WS /ws` | the streaming book the page itself uses |
+
+On SIGTERM the process closes every upstream socket before exiting: systemd
+restarts otherwise leave eight exchanges holding half-open connections from this
+IP until they time out, and a restart loop stacks them.
 
 `/api/depth` joins the same upstream feed a viewer would, and a feed with no
 viewers is kept warm for 30 s — polling it does not reopen an exchange

@@ -157,7 +157,7 @@ export function fmtBps(pct) {
  * How old the book on screen is, and how long it took to get here.
  *
  * Two separate facts, and the second one is often missing: several feeds carry
- * no exchange timestamp at all (a REST poll, Coinbase's opening frame), and the
+ * no exchange timestamp at all (a REST poll, Binance spot's snapshot), and the
  * honest answer there is to say so rather than print a latency of zero. The
  * venue delta is shown raw, negative included — a negative one is clock skew
  * between us and the exchange, which is worth seeing, not hiding.

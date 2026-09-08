@@ -36,21 +36,28 @@ const VENUES = [
   // n=3 that a direct comparison against Binance's own REST endpoint could not
   // reproduce (1.000 / 1.004 / 0.997 at ±0.05 / ±0.1 / ±0.156%, eight samples).
   { ours: ['binance','perp','BTCUSDT'],         ccxt: ['binanceusdm','BTC/USDT:USDT',1000], reps: 15, tol: [0.85, 1.18] },
-  // MEXC spot's own liquidity flickers, and no amount of sampling discipline
-  // fixes that. Measured on the venue's REST endpoint directly — no ccxt, no
-  // depthviz — ten reads 4s apart over ±2%: 177, 132, 115, 43, 221, 164, 140,
-  // 218, 146, 172 BTC, with the level count steady at ~1780. A 5x swing in the
-  // book itself, in 40 seconds. Our own feed was stable throughout (373-385
-  // levels, reach ±3.83%, no resync), so a single-instant size comparison here
-  // cannot be tight no matter how the sampling is arranged: widening the band
-  // did not help either (p05 0.19 at ±2%).
+  // MEXC spot is judged on ±0.25%, not ±0.5%, because that is the widest band
+  // on which the venue is a reference at all.
   //
-  // So this instrument keeps a wider tolerance, and the check keeps only the
-  // power it actually has on it: catching an order-of-magnitude or systematic
-  // error, not a 10% one. A missed contract multiplier is 100x and still
-  // screams. Pretending to more precision than the venue offers is what makes
-  // a check cry wolf, and a check nobody believes catches nothing.
-  { ours: ['mexc','spot','BTCUSDT'],            ccxt: ['mexc','BTC/USDT',5000],       reps: 15, tol: [0.5, 2] },
+  // Measured directly against MEXC's own REST endpoint — no ccxt, no depthviz —
+  // twenty pairs of reads one second apart, cumulative base size, p95/p05 of the
+  // ratio of a read to the read that followed it:
+  //
+  //     ±0.05%  1.59x    ±0.5%  3.06x
+  //     ±0.1%   1.53x    ±1%    5.13x
+  //     ±0.25%  1.51x    ±2%    8.89x
+  //
+  // The median sits at ~1.00 at every band, so there is no bias — past ±0.25%
+  // a handful of large orders flicker in and out and the venue simply does not
+  // hold still. Judging there was never a measurement of us; it was a
+  // measurement of MEXC's own variance, and the wide tolerance it needed made
+  // the check blind to anything short of a 2x error.
+  //
+  // Our book is not the problem, and that was measured too: against MEXC's REST
+  // book read at the same instant, twelve samples at ±0.5%, our feed came in at
+  // median 0.982 — closer to MEXC's book than MEXC's book is to itself one
+  // second later.
+  { ours: ['mexc','spot','BTCUSDT'],            ccxt: ['mexc','BTC/USDT',5000],       reps: 15, band: 0.25 },
   { ours: ['mexc','perp','BTC_USDT'],           ccxt: ['mexc','BTC/USDT:USDT',null],  contracts: true },
   // Coinbase serves its whole book, so the band is the full ±0.5% — but three
   // samples straddled agreement once (median 1.106, p05 0.995), reported

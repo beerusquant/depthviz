@@ -1,10 +1,10 @@
 name: tests
 
-# The five suites below need no network and no browser: they are the arithmetic
+# The six suites below need no network beyond loopback and no browser: they are the arithmetic
 # the whole app rests on — the resync that decides whether accumulated depth
 # survives, the sequencing engine that decides whether a book advances at all,
-# the Hyperliquid layer stitch, the payload reduction, and the metrics every
-# panel number comes from. The checks that DO need the network (ccxt
+# the watchdog that decides whether a socket is alive, the Hyperliquid layer
+# stitch, the payload reduction, and the metrics every panel number comes from. The checks that DO need the network (ccxt
 # cross-check, the venue verifiers) run hourly against the live service instead;
 # they cannot live here, because a red build caused by an exchange having a bad
 # minute teaches people to ignore the build.

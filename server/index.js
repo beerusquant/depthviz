@@ -4,7 +4,7 @@ import http from 'node:http';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { adapters, catalog } from './adapters/index.js';
-import { subscribe, stats, snapshot } from './hub.js';
+import { subscribe, stats, snapshot, closeAll } from './hub.js';
 import { computeMetrics } from '../shared/metrics.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -135,3 +135,21 @@ wss.on('connection', (ws) => {
 });
 
 server.listen(PORT, HOST, () => console.log(`depthviz listening on http://${HOST}:${PORT}`));
+
+// systemd sends SIGTERM on restart and SIGKILLs what is left 90 s later. Exiting
+// without closing the upstream sockets leaves eight exchanges holding half-open
+// connections from this IP until they time them out — and a restart loop then
+// stacks them. Close the feeds, stop accepting, and let the process end on its
+// own; if anything is still holding the loop after 5 s, leave anyway.
+let shuttingDown = false;
+for (const sig of ['SIGTERM', 'SIGINT']) {
+  process.on(sig, () => {
+    if (shuttingDown) process.exit(0);
+    shuttingDown = true;
+    console.log(`${sig}: closing ${stats().length} feeds`);
+    closeAll();
+    for (const c of wss.clients) { try { c.close(1001, 'server shutting down'); } catch {} }
+    server.close(() => process.exit(0));
+    setTimeout(() => process.exit(0), 5000).unref();
+  });
+}

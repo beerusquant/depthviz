@@ -130,8 +130,8 @@ class Feed {
     if (!(mid > 0)) return;
     this.books++;
     // Two clocks, never conflated. `tsVenue` is the exchange's own event time
-    // and is null on the feeds that do not stamp their frames (Bitunix polling,
-    // every REST snapshot, Coinbase's opening frame) — filling it with our own
+    // and is null on the feeds that do not stamp their frames (Bitunix's spot
+    // poll, Binance spot's REST snapshot) — filling it with our own
     // clock would make the two indistinguishable, and a book age of "0 ms" is
     // exactly the kind of number nobody questions. `tsRecv` is when the frame
     // reached this process, so `tsRecv - tsVenue` is upstream latency and
@@ -238,6 +238,10 @@ export function subscribe(client, { exchange, market, symbol, range }, currentFe
  * socket went quiet without closing reads `live` forever. `ageMs` is the
  * measurement that cannot lie — how long since a book last arrived.
  */
+export function closeAll() {
+  for (const f of [...feeds.values()]) f.destroy();
+}
+
 export function stats() {
   const now = Date.now();
   return [...feeds.values()].map((f) => ({
