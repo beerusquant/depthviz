@@ -9,7 +9,16 @@ Requires=depthviz.service
 Type=oneshot
 # Adjust to wherever the app is installed on your host.
 WorkingDirectory=/opt/depthviz
+# BOTH, or neither. The tools take two variables by design — the streaming ones
+# read DEPTHVIZ_URL, the ones that call the JSON API read DEPTHVIZ_HTTP — and
+# setting only the first is what this unit did until 2026-09-09: every websocket
+# check passed while every HTTP one silently fell back to port 8787 and found
+# nothing, which read as "FAIL: bitunix" for days and left the drift archive
+# empty. run-checks.mjs now derives the missing one and prints what it derived,
+# so a half-written unit is loud rather than wrong; setting both is still
+# clearer.
 Environment=DEPTHVIZ_URL=ws://127.0.0.1:8888/ws
+Environment=DEPTHVIZ_HTTP=http://127.0.0.1:8888
 ExecStart=/usr/bin/env node tools/run-checks.mjs
 User=root
 # Full ccxt crosscheck plus the two venue-specific suites; well under an hour,

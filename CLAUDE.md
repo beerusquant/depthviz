@@ -333,6 +333,20 @@ observable.
   out to be intermittent and passed on its own. It counts the reasons now and
   prints the breakdown with the URL. A `catch {}` around a sample is how a check
   becomes an oracle nobody can question.
+- **A configuration that can be written HALF is a configuration that will be.**
+  The tools take two endpoint variables by design — the streaming ones read
+  `DEPTHVIZ_URL`, the ones calling the JSON API read `DEPTHVIZ_HTTP` — and on
+  Tokyo the systemd unit set only the first while the service listened on 8888.
+  Every websocket check passed; every HTTP one fell back to the built-in 8787
+  and found nothing. That surfaced as **`FAIL: bitunix` every hour for days**,
+  blamed on the venue and investigated as an intermittent adapter fault, and it
+  left `measure-drift` writing **n=0** into the archive §2 quater exists to
+  build — while still exiting 0, because it runs without `--check`, so the
+  verdict line counted it as passed. §4 with a different hardcoded value.
+  Writing the missing variable down in one more place is not the fix:
+  `tools/lib/endpoints.mjs` derives whichever half is missing and **prints what
+  it derived**, so a half-written unit is loud instead of wrong. What found it
+  was the rule below — the check that finally named the URL it had tried.
 - **A check that never returns is worse than one that fails.** No verdict, no
   log line, no exit code — just a unit sitting there until systemd kills it
   silently. Measured on 2026-09-08: `crosscheck-ccxt` spawns a child per venue
@@ -533,6 +547,7 @@ A change that was not executed does not exist. Depending on what you touch:
 | an adapter's lifecycle — open, close, status handling, timers | `node tools/test-conformance.mjs`, and add the venue to its table |
 | `server/quota.js`, `tokenBucket`, a limit or a ceiling | `node tools/test-limits.mjs` **and** a live refusal: 14 concurrent symbols must yield 12 served and a 429 that says what to do |
 | `server/health.js`, `/api/feeds`, `/metrics` | `node tools/test-health.mjs` **and** a `curl` of both routes |
+| `tools/run-checks.mjs`, a systemd unit's environment, an endpoint variable | `node tools/test-endpoints.mjs` **and** read the first line run-checks prints — it names both endpoints and says which was derived |
 | `server/aggregate.js`, `/api/depth/aggregate`, `notionalWithin` | `node tools/test-aggregate.mjs` **and** a `curl` of the route on a real basket — check `asOf.spanMs`, `complete` and `lowerBound.reasons`, not just the total |
 | `BookSide.staleFraction`, `accum` | `node tools/test-book.mjs` — and read the fraction on a warm Aster feed, where it is ~50% against Binance's 3% |
 | an adapter's shape, or `server/adapters/contract.js` | `node tools/test-conformance.mjs` — it asserts the contract AND that its own table still covers every `(exchange, market)` the registry serves |

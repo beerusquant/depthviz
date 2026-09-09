@@ -17,6 +17,7 @@ import { spawn } from 'node:child_process';
 import { appendFileSync, mkdirSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { resolveEndpoints } from './lib/endpoints.mjs';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const root = path.join(here, '..');
@@ -33,6 +34,7 @@ const CHECKS = [
   ['reconnect tests', ['tools/test-reconnect.mjs']],
   ['stitch tests',    ['tools/test-stitch.mjs']],
   ['trim tests',      ['tools/test-trim.mjs']],
+  ['endpoint tests',  ['tools/test-endpoints.mjs']],
   ['search tests',    ['tools/test-search.mjs']],
   ['metrics tests',   ['tools/test-metrics.mjs']],
   ['aggregate tests', ['tools/test-aggregate.mjs']],
@@ -61,8 +63,16 @@ const CHECKS = [
 // behind it. A timeout that reports is the whole point.
 const TIMEOUT_MS = +process.env.DEPTHVIZ_CHECK_TIMEOUT_MS || 15 * 60_000;
 
+/**
+ * The endpoint pair every child inherits, with whichever half was missing
+ * filled in — see tools/lib/endpoints.mjs for the hour of false failures that
+ * bought this. Resolved once, here, rather than in each of sixteen tools.
+ */
+const ENDPOINTS = resolveEndpoints(process.env);
+const CHILD_ENV = { ...process.env, ...ENDPOINTS.env };
+
 const run = (args) => new Promise((res) => {
-  const p = spawn(process.execPath, args, { cwd: root, stdio: ['ignore', 'pipe', 'pipe'] });
+  const p = spawn(process.execPath, args, { cwd: root, env: CHILD_ENV, stdio: ['ignore', 'pipe', 'pipe'] });
   let out = '';
   let timedOut = false;
   const timer = setTimeout(() => {
@@ -84,6 +94,11 @@ const run = (args) => new Promise((res) => {
 });
 
 const started = new Date();
+// Printed, never silent: a derived endpoint is a configuration that was written
+// half-way, and the next person to read this log should see which half.
+console.log(`depthviz checks — ws ${CHILD_ENV.DEPTHVIZ_URL || '(tool default)'}`
+  + `  http ${CHILD_ENV.DEPTHVIZ_HTTP || '(tool default)'}`
+  + (ENDPOINTS.derived ? `\n  derived ${ENDPOINTS.derived}` : ''));
 const results = [];
 for (const [name, args] of CHECKS) {
   const t0 = Date.now();
