@@ -11,7 +11,7 @@
  * opens sockets is what makes it provable here.
  */
 import { Quota, Counter } from '../server/quota.js';
-import { tokenBucket } from '../server/util.js';
+import { tokenBucket, upstreamGate } from '../server/util.js';
 
 let pass = 0, fail = 0;
 const ok = (name, cond, detail = '') => {
@@ -102,6 +102,84 @@ console.log('\ntokenBucket — the sustained rate on the routes that reach an ex
   ok('idle ones are forgotten', b.sweep(t0 + 60_000) === 0);
   ok('and forgetting one gives it a full bucket, which is what it had',
      b.take('a', t0 + 60_000) === null);
+}
+
+console.log('\nupstreamGate — the burst of REST calls a feed opening makes');
+{
+  // Twelve feeds opening at once is enough for Binance itself to answer 429 on
+  // the snapshot calls (measured 2026-09-08). Every adapter reaches an exchange
+  // through fetchJson, so the bound lives there — this is that bound, with the
+  // network replaced by a promise we resolve by hand.
+  const g = upstreamGate({ maxInflight: 4, maxQueue: 3 });
+  let live = 0, peak = 0, started = 0;
+  const release = [];
+  const job = () => {
+    started += 1; live += 1; peak = Math.max(peak, live);
+    return new Promise((r) => release.push(() => { live -= 1; r('done'); }));
+  };
+
+  const runs = Array.from({ length: 7 }, () => g.run('api.binance.com', job).catch((e) => e.code));
+  await new Promise((r) => setImmediate(r));
+  ok('only the cap is let through at once', started === 4, `${started} started`);
+  ok('and the rest are waiting, not refused', g.stats()[0].queued === 3, JSON.stringify(g.stats()));
+
+  // The eighth caller finds a full queue behind a saturated host. It must be
+  // told so, immediately: an unbounded queue is worse than the 429 it avoids,
+  // because callers pile up behind a venue that has stopped answering with
+  // nothing to say why.
+  const refused = await g.run('api.binance.com', job).catch((e) => e);
+  ok('past the queue it refuses rather than waiting forever', refused?.code === 'UPSTREAM_BUSY');
+  ok('and the refusal names the host and what it is doing',
+     /api\.binance\.com saturated: 4 in flight, 3 queued/.test(refused.message), refused.message);
+
+  // A second venue is not behind the first: one exchange being slow must not
+  // stop the other seven. It still starts on a microtask, so the question is
+  // whether it starts AT ALL while the first host is saturated.
+  const other = await g.run('api.mexc.com', () => 'ok');
+  ok('a different host is not queued behind a saturated one', other === 'ok');
+
+  // Draining is iterative: releasing the four in flight admits the three that
+  // were queued, and those only register their own release once they start.
+  for (let i = 0; i < 20 && (release.length || live); i++) {
+    while (release.length) release.shift()();
+    await new Promise((r) => setImmediate(r));
+  }
+  const out = await Promise.all(runs);
+  ok('every accepted caller eventually gets its answer',
+     out.length === 7 && out.every((v) => v === 'done'), JSON.stringify(out));
+  ok('and the cap was never exceeded on the way', peak === 4, `peak ${peak}`);
+  ok('an idle host is forgotten rather than kept forever', g.stats().length === 0,
+     JSON.stringify(g.stats()));
+}
+{
+  // A failed request has to give its slot back. Without this one unreachable
+  // venue narrows its own gate permanently and the queue behind it never drains
+  // — a limiter that fails closed onto itself.
+  const g = upstreamGate({ maxInflight: 1 });
+  const boom = await g.run('h', () => Promise.reject(new Error('venue down'))).catch((e) => e.message);
+  ok('a rejected job propagates its own error, not the gate\'s', boom === 'venue down');
+  const after = await g.run('h', () => 'recovered');
+  ok('and it released the slot it held', after === 'recovered');
+
+  const threw = await g.run('h', () => { throw new Error('sync throw'); }).catch((e) => e.message);
+  ok('a synchronous throw is handled the same way', threw === 'sync throw');
+  ok('and it too released its slot', (await g.run('h', () => 'ok')) === 'ok');
+}
+{
+  // The spacing knob exists but ships off, because no distribution has been
+  // sampled for it. What is testable is that it does what it says when set.
+  const g = upstreamGate({ maxInflight: 8, minGapMs: 30 });
+  const t0 = Date.now();
+  const at = [];
+  await Promise.all([0, 1, 2].map(() => g.run('h', () => { at.push(Date.now() - t0); })));
+  ok('a spacing, when set, is applied between starts',
+     at.length === 3 && at[1] >= 25 && at[2] >= 55, JSON.stringify(at));
+  // The timer that paces those starts must NOT be unref'd: it is the only thing
+  // that will ever resolve the callers waiting behind it, and a process exiting
+  // with them still suspended is how a /api/depth call returns nothing at all.
+  // What must hold instead is that an idle gate holds no timer to begin with.
+  ok('and once drained it holds nothing that would keep the process alive',
+     g.stats().length === 0, JSON.stringify(g.stats()));
 }
 
 console.log(`\n${pass} passed, ${fail} failed`);

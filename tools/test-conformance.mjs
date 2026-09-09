@@ -16,7 +16,7 @@
  *     written, and the chart was a plausible book the whole time.
  *
  * Each of those is now tested — on the adapter it happened to. This file asks
- * the same questions of all eight, because the next one will land somewhere
+ * the same questions of all thirteen, because the next one will land somewhere
  * else. Every frame and every REST body below is a real capture in
  * tools/fixtures/venues.json.
  */
@@ -24,6 +24,7 @@ import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { adapters } from '../server/adapters/index.js';
+import { assertAdapter, feedsOf } from '../server/adapters/contract.js';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const F = JSON.parse(readFileSync(path.join(here, 'fixtures', 'venues.json'), 'utf8'));
@@ -169,6 +170,51 @@ const VENUES = [
     assembled: true,
   },
 ];
+
+// Before driving anything: does this table still describe the adapters that
+// exist? It is written by hand, and a contract that covers twelve of thirteen
+// feeds is a contract about nothing — the venue nobody remembered to add is
+// exactly the one with no lifecycle coverage. Derived from the registry rather
+// than counted, so adding an adapter fails here until it is driven too.
+console.log('coverage — the table describes every feed that exists');
+{
+  const declared = feedsOf(adapters).map((f) => `${f.exchange}:${f.market}`);
+  const covered = new Set(VENUES.map((v) => `${v.exchange}:${v.market}`));
+  const missing = declared.filter((f) => !covered.has(f));
+  ok(`every (exchange, market) an adapter serves is driven here (${declared.length})`,
+     missing.length === 0, `not covered: ${missing.join(', ')}`);
+
+  const stray = [...covered].filter((f) => !declared.includes(f));
+  ok('and the table names no feed that does not exist', stray.length === 0, stray.join(', '));
+  ok('no venue is driven twice', covered.size === VENUES.length,
+     `${VENUES.length} rows, ${covered.size} distinct`);
+
+  // The structural contract itself, on the registry as it stands.
+  let shapeErr = null;
+  try { for (const [k, a] of Object.entries(adapters)) assertAdapter(a, k); }
+  catch (e) { shapeErr = e; }
+  ok('every adapter satisfies the structural contract', shapeErr === null, shapeErr?.message);
+
+  // A check is worth what it catches. Six deliberate breaks, one at a time,
+  // each the shape of a real typo — and each has to name the field it is about,
+  // because "invalid adapter" sends someone reading eight files.
+  const good = { id: 'x', name: 'X', markets: ['spot'], transport: { spot: 'ws' },
+                 listSymbols() {}, vol24h() {}, open() {} };
+  const refuses = (label, mutate, needle) => {
+    const a = { ...good, ...mutate };
+    let e = null;
+    try { assertAdapter(a, 'x'); } catch (err) { e = err; }
+    ok(`it refuses ${label}, and says which field`, e !== null && needle.test(e.message),
+       e ? e.message : 'accepted it');
+  };
+  ok('the reference adapter is accepted', assertAdapter(good, 'x') === good);
+  refuses('a market no route serves', { markets: ['futures'] }, /markets names "futures"/);
+  refuses('a market with no transport', { markets: ['spot', 'perp'] }, /transport\.perp/);
+  refuses('a transport that is neither ws nor poll', { transport: { spot: 'rest' } }, /transport\.spot/);
+  refuses('a note filed under a market it does not serve', { notes: { perp: 'hi' } }, /notes has a "perp"/);
+  refuses('a missing entry point', { open: undefined }, /open must be a function/);
+  refuses('an id that disagrees with its registry key', { id: 'y' }, /registered as "x"/);
+}
 
 const twoSided = (b) => b.bids?.length > 0 && b.asks?.length > 0;
 const reachOf = (book) => {

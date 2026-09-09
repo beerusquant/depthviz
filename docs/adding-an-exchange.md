@@ -16,7 +16,16 @@ Drop a module in `server/adapters/` exporting
 }
 ```
 
-and register it in `server/adapters/index.js`. If the venue maintains its book
+and register it in `server/adapters/index.js`, which asserts that shape at import
+time (`server/adapters/contract.js`) — a missing `transport` entry or a note
+filed under a market you do not serve fails at startup with the field named,
+rather than as a 500 on the first viewer who picks your venue. Add the venue's
+`(exchange, market)` rows to the table in `tools/test-conformance.mjs` too: that
+suite now fails if the registry serves a feed the table does not drive, because
+a lifecycle contract covering twelve of thirteen feeds is a contract about
+nothing.
+
+If the venue maintains its book
 by snapshot + versioned diffs, do not re-implement it: `server/adapters/diff-book.js`
 is that engine, and **five of the thirteen feeds run it** — Binance spot and
 perp, Aster, and both MEXC markets. A venue supplies `decode(raw)` and
@@ -45,7 +54,16 @@ optional: `accum: { since }` marks a book that only reaches past its snapshot by
 accumulating diffs, so the UI can say the far depth is still converging
 ([tradeoff 7](architecture.md#tradeoffs-i-had-to-make)); `drift` is a 0..1
 disagreement between two transports of the same venue, where one exists
-([tradeoff 8](architecture.md#tradeoffs-i-had-to-make)). The UI needs no changes.
+([tradeoff 8](architecture.md#tradeoffs-i-had-to-make)) — emit `driftTs`, the
+instant you measured it, beside it: both venues that make this measurement
+swallow a failed read to protect the stream, so the previous value stands and
+without its age a ten-minute-old disagreement reads as a fresh one. The UI needs
+no changes.
+
+Your REST calls go through `fetchJson`, which gates them at four in flight per
+exchange host — twelve feeds opening at once was enough for Binance to answer
+429 on the snapshots. You do not have to do anything about it; do not work
+around it either.
 
 Two rules about *when* you may emit, both of which have already been broken here:
 

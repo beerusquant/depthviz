@@ -105,5 +105,47 @@ console.log('\ncoalesce');
   c.cancel();
 }
 
+console.log('\nstaleFraction — how much of the depth nobody has confirmed');
+{
+  // The venues that stream diffs reach past their capped snapshot only by
+  // accumulating updates. `accum.since` says how long that has been going on;
+  // this says how much of what is on screen is resting on it.
+  const T = 1_000_000;
+  const b = new BookSide(true);
+  b.set(99, 10, T);           // 990 notional, fresh
+  b.set(98, 10, T - 300_000); // 980 notional, five minutes old
+  b.set(50, 10, T - 300_000); // outside a ±10% band around a mid of 100
+  const near6 = (x) => (x === null ? null : +x.toFixed(6));
+
+  eq('it weighs notional, not levels',
+     near6(b.staleFraction(100, 10, 120_000, T)), near6(980 / (990 + 980)));
+  eq('and it only weighs what is inside the band it was asked about',
+     near6(b.staleFraction(100, 60, 120_000, T)), near6((980 + 500) / (990 + 980 + 500)));
+
+  eq('a cutoff nothing has crossed reports none of it stale',
+     b.staleFraction(100, 10, 600_000, T), 0);
+  // Read a moment later, so every level has a non-zero age to compare: a level
+  // set at exactly `now` is 0 ms old and is not past a 1 ms cutoff.
+  eq('a cutoff everything has crossed reports all of it',
+     b.staleFraction(100, 10, 1, T + 10), 1);
+
+  // Re-touching a level makes it fresh again, which is the whole point: the
+  // question is corroboration, not age of first sight.
+  b.set(98, 10, T);
+  eq('touching a level again makes it fresh', b.staleFraction(100, 10, 120_000, T), 0);
+
+  // A fraction of nothing is not zero staleness: a 0 there would read as "all
+  // of it confirmed" on a book that has no depth in the band at all.
+  eq('an empty book reports null, not a reassuring zero',
+     new BookSide(true).staleFraction(100, 10, 120_000, T), null);
+  eq('and so does a band with nothing inside it',
+     b.staleFraction(100, 0.001, 120_000, T), null);
+
+  // A level a diff removed must not keep aging in the shadows.
+  b.set(99, 0, T);
+  eq('a cancelled level is not counted at all',
+     [b.size, b.staleFraction(100, 10, 1, T + 10)], [2, 1]);
+}
+
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);

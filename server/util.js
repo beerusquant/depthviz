@@ -8,21 +8,123 @@ const UA = { 'User-Agent': 'depthviz/1.0', 'Accept': 'application/json' };
 // waste, and an adapter publishing slower makes the hub's throttle a lie.
 export const PUBLISH_MS = 200;
 
+/**
+ * How many REST calls this process may have in flight to ONE exchange host, and
+ * what happens to the rest.
+ *
+ * Measured 2026-09-08: opening twelve feeds at once from a single client is
+ * enough for Binance itself to answer 429 on the snapshot calls. The per-client
+ * feed quota bounds how many feeds exist; nothing bounded the burst of REST
+ * snapshots that opening them produces, and every adapter reaches an exchange
+ * through this one function — which makes it the only place a bound can be
+ * written once instead of eight times.
+ *
+ * Concurrency is the parameter that needs no distribution behind it: four
+ * simultaneous requests to one venue is a bound by construction, not a
+ * threshold someone guessed. A minimum SPACING between requests would need one,
+ * and this repo does not hand out thresholds it has not sampled — so it exists,
+ * it defaults to off, and it stays off until somebody measures what the venues
+ * actually tolerate. See §2 bis: not every measurement earns a threshold.
+ *
+ * The queue is bounded and REPORTS. An unbounded one is worse than the 429 it
+ * is avoiding: requests pile up behind a venue that has stopped answering, each
+ * one holding a caller, and the process degrades with nothing to say why.
+ */
+const UPSTREAM = {
+  maxInflight: +process.env.DEPTHVIZ_UPSTREAM_INFLIGHT || 4,
+  minGapMs: +process.env.DEPTHVIZ_UPSTREAM_GAP_MS || 0,
+  maxQueue: +process.env.DEPTHVIZ_UPSTREAM_QUEUE || 64,
+};
+
+export function upstreamGate({ maxInflight = 4, minGapMs = 0, maxQueue = 64 } = {}) {
+  const hosts = new Map(); // host -> { inflight, last, q, timer }
+
+  const pump = (host) => {
+    const st = hosts.get(host);
+    if (!st) return;
+    st.timer = null;
+    while (st.q.length && st.inflight < maxInflight) {
+      const now = Date.now();
+      const wait = minGapMs - (now - st.last);
+      if (wait > 0) {
+        // Re-armed rather than spun: the next start is a clock event, not a slot
+        // event.
+        //
+        // NOT unref'd, and that was a bug the tests caught before this shipped:
+        // this timer only exists while the queue is non-empty, i.e. while
+        // somebody is awaiting a promise that nothing else will ever resolve.
+        // Unref'ing it let the process exit with those callers still suspended.
+        // The reason to unref — a gate that keeps a quiet process alive — does
+        // not apply, because an idle host holds no timer at all.
+        st.timer = setTimeout(() => pump(host), wait);
+        return;
+      }
+      st.last = now;
+      st.inflight += 1;
+      st.q.shift()();
+    }
+    // Hosts are a bounded set today, but a gate that never forgets one keeps a
+    // row per host for the life of the process. An idle host holds no state
+    // worth remembering.
+    if (!st.q.length && !st.inflight && !st.timer) hosts.delete(host);
+  };
+
+  return {
+    /** Run `fn` when this host has room, or refuse saying the host is saturated. */
+    run(host, fn) {
+      let st = hosts.get(host);
+      if (!st) { st = { inflight: 0, last: 0, q: [], timer: null }; hosts.set(host, st); }
+      // `finally` and not `then`: a request that FAILED still gives its slot
+      // back, or one unreachable venue permanently narrows the gate for itself
+      // and the queue behind it never drains.
+      const start = () => Promise.resolve().then(fn).finally(() => {
+        st.inflight -= 1;
+        pump(host);
+      });
+      // Queued callers go first, always: letting a new one overtake them is how
+      // a steady stream of requests starves whatever is already waiting.
+      if (!st.q.length && st.inflight < maxInflight && Date.now() - st.last >= minGapMs) {
+        st.last = Date.now();
+        st.inflight += 1;
+        return start();
+      }
+      if (st.q.length >= maxQueue) {
+        const e = new Error(`upstream ${host} saturated: ${st.inflight} in flight, ${st.q.length} queued`);
+        e.code = 'UPSTREAM_BUSY';
+        return Promise.reject(e);
+      }
+      return new Promise((res, rej) => { st.q.push(() => start().then(res, rej)); });
+    },
+    stats() {
+      return [...hosts].map(([host, st]) => ({ host, inflight: st.inflight, queued: st.q.length }));
+    },
+  };
+}
+
+const gate = upstreamGate(UPSTREAM);
+
+/** What each exchange host currently owes us, for /api/feeds. */
+export const upstreamStats = () => gate.stats();
+
 export async function fetchJson(url, opts = {}) {
-  const ctl = new AbortController();
-  const t = setTimeout(() => ctl.abort(), opts.timeout || 12000);
-  try {
-    const r = await fetch(url, {
-      method: opts.method || 'GET',
-      headers: { ...UA, ...(opts.headers || {}) },
-      body: opts.body,
-      signal: ctl.signal,
-    });
-    if (!r.ok) throw new Error(`HTTP ${r.status} ${url.slice(0, 120)}`);
-    return await r.json();
-  } finally {
-    clearTimeout(t);
-  }
+  // Every adapter's REST call passes here, so the per-host bound is applied
+  // once rather than in eight adapters that would each have to remember it.
+  return gate.run(new URL(url).host, async () => {
+    const ctl = new AbortController();
+    const t = setTimeout(() => ctl.abort(), opts.timeout || 12000);
+    try {
+      const r = await fetch(url, {
+        method: opts.method || 'GET',
+        headers: { ...UA, ...(opts.headers || {}) },
+        body: opts.body,
+        signal: ctl.signal,
+      });
+      if (!r.ok) throw new Error(`HTTP ${r.status} ${url.slice(0, 120)}`);
+      return await r.json();
+    } finally {
+      clearTimeout(t);
+    }
+  });
 }
 
 export function postJson(url, payload, opts = {}) {
@@ -257,6 +359,35 @@ export class BookSide {
     }
     for (const r of rows) this.set(r[0], r[1], now);
     return kept;
+  }
+
+  /**
+   * How much of the depth inside `band`% of mid has not been touched recently.
+   *
+   * The venues that stream diffs reach past their capped REST snapshot only by
+   * accumulating updates, so their far depth is a lower bound that grows with
+   * uptime — this repo has said so since §1, and `accum: { since }` marks it.
+   * What `since` cannot answer is HOW MUCH: "$70M at ±10%" and "$70M at ±10%,
+   * of which 62% is levels nobody has confirmed in two minutes" are different
+   * claims, and only the second one is a measurement.
+   *
+   * A stale level is not a wrong level — a resting order can legitimately sit
+   * untouched for an hour, and on an illiquid book most of them do. It is the
+   * fraction that cannot be corroborated, which is the honest caveat on a
+   * figure that was reconstructed rather than read.
+   *
+   * Returns null rather than 0 when there is nothing inside the band to weigh:
+   * a fraction of no depth is not zero staleness.
+   */
+  staleFraction(mid, band, cutoffMs, now = Date.now()) {
+    let total = 0, stale = 0;
+    for (const [p, q] of this.m) {
+      if (Math.abs(p / mid - 1) * 100 > band) continue;
+      const n = p * q;
+      total += n;
+      if (now - (this.seen.get(p) ?? 0) > cutoffMs) stale += n;
+    }
+    return total > 0 ? stale / total : null;
   }
 
   /** Sorted [[price,size]...] — bids descending, asks ascending. */

@@ -3,6 +3,19 @@ import { reconnectingWs, BookSide, coalesce, PUBLISH_MS } from '../util.js';
 const TAIL_MAX_GAP_MS = 30_000;   // longer outage => distrust the deep tail
 
 /**
+ * The window `accum.staleFrac` is reported over, and the band it is measured on.
+ *
+ * Not a threshold: nothing here decides anything on these numbers, they are the
+ * protocol a reported fraction has to be quoted with — §1's "no number without
+ * a protocol", applied to the caveat rather than to the figure. Two minutes is
+ * long enough that a normally-traded book near mid re-confirms almost all of
+ * itself inside it, and ±10% is the widest band the UI offers. Both travel in
+ * the payload, so a reader never has to look them up here.
+ */
+const STALE_CUTOFF_MS = 120_000;
+const STALE_BAND_PCT = 10;
+
+/**
  * The snapshot + versioned-diff order book, shared by every venue that speaks
  * that dialect: Binance spot and perp, Aster, and both MEXC markets. Five of
  * the thirteen feeds run this one implementation.
@@ -58,13 +71,33 @@ export function openDiffBook(cfg, emit, status) {
 
   // Coalesced: every diff is applied the instant it lands, but the book is only
   // sorted, bucketed and serialised at the rate anyone can actually consume it.
-  const publish = coalesce((ts) => closed || emit({
-    bids: bids.toArray(), asks: asks.toArray(), ts, source: 'ws',
-    // The book reaches past a capped snapshot only because diffs for every
-    // price level are applied on top of it, so depth outside the snapshot's
-    // span is a lower bound that grows with uptime.
-    accum: { since: tailSince },
-  }), PUBLISH_MS);
+  const publish = coalesce((ts) => {
+    if (closed) return;
+    const b = bids.toArray(), a = asks.toArray();
+    // Measured here rather than in the hub, because `seen` lives in the book
+    // side and the hub is handed [[price, size]] rows. It costs one pass over a
+    // book that was just sorted, on the frames that are actually shipped —
+    // PUBLISH_MS, not every upstream diff.
+    const mid = b.length && a.length ? (b[0][0] + a[0][0]) / 2 : null;
+    emit({
+      bids: b, asks: a, ts, source: 'ws',
+      // The book reaches past a capped snapshot only because diffs for every
+      // price level are applied on top of it, so depth outside the snapshot's
+      // span is a lower bound that grows with uptime. `since` says how long it
+      // has been growing; `staleFrac` says how much of what is being shown
+      // nobody has confirmed inside `cutoffMs` — which is the part a reader
+      // actually has to discount.
+      accum: {
+        since: tailSince,
+        cutoffMs: STALE_CUTOFF_MS,
+        bandPct: STALE_BAND_PCT,
+        staleFrac: mid === null ? null : {
+          bid: bids.staleFraction(mid, STALE_BAND_PCT, STALE_CUTOFF_MS),
+          ask: asks.staleFraction(mid, STALE_BAND_PCT, STALE_CUTOFF_MS),
+        },
+      },
+    });
+  }, PUBLISH_MS);
 
   // Fetch a snapshot, then replay the diffs buffered while it was in flight.
   const resync = async () => {
@@ -101,6 +134,10 @@ export function openDiffBook(cfg, emit, status) {
       if (!closed) setTimeout(() => { syncing = false; resync(); }, 1500);
       return;
     }
+    // Not a race: `syncing` is read and set at the top of this function, before
+    // any await, so a concurrent call returns before reaching here. The rule
+    // only sees an assignment after an await.
+    // eslint-disable-next-line require-atomic-updates
     syncing = false;
   };
 

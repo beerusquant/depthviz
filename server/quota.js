@@ -12,7 +12,7 @@
  * So the accounting is per owner (a remote address), and it is a separate
  * module for one reason: constructing a real Feed opens sockets to an exchange,
  * so the only way to test the rule deterministically is to keep the rule out of
- * the thing that opens sockets. tools/test-quota.mjs pins it with no network.
+ * the thing that opens sockets. tools/test-limits.mjs pins it with no network.
  *
  * Joining a feed somebody else already holds is deliberately free of charge —
  * two viewers on BTCUSDT cost one upstream connection, and charging the second
