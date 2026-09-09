@@ -1,40 +1,43 @@
 import { computeMetrics, panelRows } from '/shared/metrics.js';
 import { draw } from './chart.js';
+import { $, state, invalidate, exOf, exName } from './state.js';
+import { connect, subscribe } from './feed.js';
+import { closeMenu, closeAllMenus, renderExchangeMenu, renderSymbolMenu } from './menus.js';
 
-const $ = (id) => document.getElementById(id);
+/**
+ * The page: what it draws, what its controls do, and how it is wired up.
+ *
+ * The three things this file does NOT do are the reason the rest of it is
+ * readable — `state.js` holds the facts, `feed.js` owns the socket and its
+ * reconnects, `menus.js` renders the two dropdowns. The import graph is a tree:
+ * app depends on all three, they depend only on state, so there is no cycle to
+ * reason about and no module that has to be loaded in a particular order.
+ */
+
 const canvas = $('chart');
 
-const state = {
-  catalog: [],
-  exchange: 'binance',
-  market: 'spot',
-  symbol: null,
-  display: null,
-  quote: 'USD',
-  range: 2,
-  symbols: [],
-  book: null,
-  bookSeq: 0,
-  vol24h: null,
-  metrics: null,
-  status: 'connecting',
-  statusDetail: '',
-  theme: localStorage.getItem('depthviz.theme') || 'dark',
-  hover: null,
-  dirty: true,
-};
-
-const exOf = (id) => state.catalog.find((c) => c.id === id);
-const exName = () => exOf(state.exchange)?.name || state.exchange;
-
 // ---------------------------------------------------------------- rendering
-function invalidate() { state.dirty = true; }
 
 // The chart is redrawn for reasons that do not change a single number: a
 // crosshair moving under the finger, the once-a-second tick that keeps the book
 // age honest, a window resize. Recomputing the whole book on those is pure
 // waste, so the metrics are keyed on the only two things they depend on.
 let metricsKey = null;
+
+/** Everything the chart and the panel need that is not the book itself. */
+function meta(now = Date.now()) {
+  return {
+    exchangeName: exName(),
+    market: state.market,
+    display: state.display || state.symbol || '—',
+    quote: state.quote,
+    vol24h: state.vol24h,
+    volTs: state.volTs,
+    tsVenue: state.book?.tsVenue ?? null,
+    tsRecv: state.book?.tsRecv ?? null,
+    now,
+  };
+}
 
 function frame() {
   if (state.dirty) {
@@ -51,16 +54,7 @@ function frame() {
       theme: state.theme,
       hover: state.hover,
       statusText: state.statusDetail || state.status,
-      meta: {
-        exchangeName: exName(),
-        market: state.market,
-        display: state.display || state.symbol || '—',
-        quote: state.quote,
-        vol24h: state.vol24h,
-        tsVenue: state.book?.tsVenue ?? null,
-        tsRecv: state.book?.tsRecv ?? null,
-        now: Date.now(),
-      },
+      meta: meta(),
     });
     renderNote();
   }
@@ -105,17 +99,26 @@ function renderNote() {
   } else if (state.book?.accum?.since && state.range > 0.6) {
     // A book that only reaches past its snapshot by accumulating diffs is a
     // lower bound while it is young. Said once, briefly, then it goes away.
-    const secs = Math.round((Date.now() - state.book.accum.since) / 1000);
+    const a = state.book.accum;
+    const secs = Math.round((Date.now() - a.since) / 1000);
     if (secs < 60) bits.push(`depth beyond ±0.6% is still filling in — ${secs}s of updates so far, so it can only grow`);
+    else {
+      // Past that the book has stopped being obviously young, and the question
+      // changes from "is it filled in yet" to "how much of it is corroborated".
+      // Only worth saying when it is a large share: a fifth of a book resting
+      // untouched for two minutes is an ordinary book, not a warning.
+      const f = a.staleFrac && Math.max(a.staleFrac.bid ?? 0, a.staleFrac.ask ?? 0);
+      if (f >= 0.5) {
+        bits.push(`${Math.round(f * 100)}% of the depth within ±${a.bandPct}% has not been re-confirmed in ${Math.round(a.cutoffMs / 1000)}s — accumulated, not read`);
+      }
+    }
   }
   const el = $('note');
   el.textContent = bits.join(' · ');
   el.classList.toggle('hidden', bits.length === 0);
 }
 
-// ---------------------------------------------------------- server websocket
-let ws = null, wsRetry = 0, wsTimer = null;
-
+/** How a connection state is shown. Passed to feed.js, which owns the socket. */
 function setStatus(s, detail = '') {
   state.status = s;
   state.statusDetail = detail;
@@ -136,42 +139,6 @@ function setStatus(s, detail = '') {
   invalidate();
 }
 
-function connect() {
-  const proto = location.protocol === 'https:' ? 'wss' : 'ws';
-  ws = new WebSocket(`${proto}://${location.host}/ws`);
-  ws.onopen = () => { wsRetry = 0; sendSubscribe(); };
-  ws.onmessage = (ev) => {
-    const m = JSON.parse(ev.data);
-    if (m.op === 'status') setStatus(m.state, m.detail);
-    else if (m.op === 'book') {
-      if (m.exchange !== state.exchange || m.market !== state.market || m.symbol !== state.symbol) return;
-      state.book = { bids: m.bids, asks: m.asks, tsVenue: m.tsVenue, tsRecv: m.tsRecv, source: m.source, levels: m.levels, accum: m.accum };
-      state.bookSeq++;
-      state.vol24h = m.vol24h;
-      if (state.status !== 'live') setStatus('live');
-      invalidate();
-    }
-  };
-  ws.onclose = () => {
-    setStatus('offline');
-    clearTimeout(wsTimer);
-    wsTimer = setTimeout(connect, Math.min(8000, 400 * 2 ** wsRetry++));
-  };
-  ws.onerror = () => { try { ws.close(); } catch {} };
-}
-
-function sendSubscribe() {
-  if (!ws || ws.readyState !== WebSocket.OPEN || !state.symbol) return;
-  setStatus('connecting');
-  ws.send(JSON.stringify({
-    op: 'subscribe',
-    exchange: state.exchange,
-    market: state.market,
-    symbol: state.symbol,
-    range: state.range,
-  }));
-}
-
 // -------------------------------------------------------------- symbol list
 function pickDefault(list) {
   return list.find((s) => s.base === 'BTC' && s.quote === 'USDT')
@@ -179,20 +146,35 @@ function pickDefault(list) {
     || list[0];
 }
 
+// Which listing request is the current one. Two clicks between venues put two
+// of these in flight, and the one that answers second wins — which is not the
+// same as the one that was asked for last. The visible result is a pair list
+// from one exchange sitting under another's name, so the next symbol picked
+// does not exist on the venue it is sent to. A slow venue is enough on its own.
+let listGen = 0;
+
 async function loadSymbols(keepSymbol = null) {
+  const gen = ++listGen;
+  const { exchange, market } = state;
   $('pairs').textContent = 'LOADING…';
   state.symbols = [];
+  let j;
   try {
-    const r = await fetch(`/api/symbols?exchange=${state.exchange}&market=${state.market}`);
-    const j = await r.json();
+    const r = await fetch(`/api/symbols?exchange=${exchange}&market=${market}`);
+    j = await r.json();
     if (j.error) throw new Error(j.error);
-    state.symbols = j.symbols;
-    $('pairs').textContent = `${j.count.toLocaleString('en-US')} PAIRS`;
   } catch (e) {
+    if (gen !== listGen) return;   // superseded: not this request's error to report
     $('pairs').textContent = 'LIST FAILED';
     setStatus('error', e.message);
     return;
   }
+  if (gen !== listGen) return;     // a later request owns the screen now
+  // The guard above IS the atomicity the rule is asking for; it cannot see a
+  // generation token, only the await before the assignment.
+  // eslint-disable-next-line require-atomic-updates
+  state.symbols = j.symbols;
+  $('pairs').textContent = `${j.count.toLocaleString('en-US')} PAIRS`;
   const found = keepSymbol && state.symbols.find((s) => s.d === keepSymbol);
   selectSymbol(found || pickDefault(state.symbols));
 }
@@ -205,96 +187,11 @@ function selectSymbol(s) {
   state.book = null;
   state.bookSeq++;
   state.vol24h = null;
+  state.volTs = null;
   $('sym-input').value = s.d;
   closeMenu($('sym-menu'));
   invalidate();
-  sendSubscribe();
-}
-
-// -------------------------------------------------------------------- menus
-function closeMenu(el) { el.classList.remove('open'); }
-function closeAll() { document.querySelectorAll('.menu').forEach(closeMenu); }
-
-/**
- * A menu row: a label and a dim raw value, both written as TEXT.
- *
- * Symbol names are chosen by whoever lists the token, not by us — 27 of the
- * 10 250 pairs served today already carry names outside plain ASCII
- * (`币安人生/USDT`, `GOLD(PAXG)/USDC`). Interpolating those into markup makes
- * the listing form a script tag away from running in the viewer's page, so
- * nothing from an exchange is ever parsed as HTML here.
- */
-function menuRow(label, raw) {
-  const d = document.createElement('div');
-  const a = document.createElement('span');
-  a.textContent = label;
-  const b = document.createElement('span');
-  b.className = 'raw';
-  b.textContent = raw;
-  d.append(a, b);
-  return d;
-}
-
-function renderExchangeMenu() {
-  const el = $('ex-menu');
-  el.replaceChildren();
-  for (const c of state.catalog) {
-    const ok = c.markets.includes(state.market);
-    const d = menuRow(c.name, c.markets.map((m) => c.transport[m]).join('/'));
-    d.className = `menu-i${ok ? '' : ' disabled'}${c.id === state.exchange ? ' sel' : ''}`;
-    if (ok) d.onclick = () => { setExchange(c.id); closeMenu(el); };
-    el.appendChild(d);
-  }
-}
-
-const QUOTE_RANK = { USDT: 0, USD: 1, USDC: 2, USDE: 3, EUR: 6 };
-
-/** Rank matches so typing "RAY" lands on RAY/USDT, not RAY/TRY. */
-function scoreSymbol(s, needle) {
-  const base = s.base.toUpperCase();
-  const d = s.d.toUpperCase();
-  const raw = s.s.toUpperCase();
-  let hit;
-  if (base === needle) hit = 0;
-  else if (base.startsWith(needle)) hit = 1;
-  else if (d.startsWith(needle)) hit = 2;
-  else if (d.includes(needle)) hit = 3;
-  else if (raw.includes(needle)) hit = 4;
-  else return null;
-  return hit * 10 + (QUOTE_RANK[s.quote?.toUpperCase()] ?? 5);
-}
-
-function renderSymbolMenu(q = '') {
-  const el = $('sym-menu');
-  const needle = q.trim().toUpperCase();
-  let hits;
-  if (!needle) {
-    hits = state.symbols.slice(0, 400);
-  } else {
-    const scored = [];
-    for (const s of state.symbols) {
-      const sc = scoreSymbol(s, needle);
-      if (sc !== null) scored.push([sc, s]);
-    }
-    scored.sort((a, b) => a[0] - b[0] || a[1].d.localeCompare(b[1].d));
-    hits = scored.slice(0, 400).map((x) => x[1]);
-  }
-  el.replaceChildren();
-  if (!hits.length) {
-    const empty = document.createElement('div');
-    empty.className = 'menu-empty';
-    empty.textContent = 'no match';
-    el.appendChild(empty);
-  } else {
-    for (const s of hits) {
-      const d = menuRow(s.d, s.s);
-      d.className = `menu-i${s.s === state.symbol ? ' sel' : ''}`;
-      d.onmousedown = (e) => { e.preventDefault(); selectSymbol(s); };
-      el.appendChild(d);
-    }
-  }
-  el.classList.add('open');
-  return hits;
+  subscribe();
 }
 
 // ----------------------------------------------------------------- controls
@@ -302,7 +199,7 @@ function setExchange(id) {
   state.exchange = id;
   $('ex-label').textContent = `${exName()} [${state.market.toUpperCase()}]`;
   loadSymbols(state.display);
-  renderExchangeMenu();
+  renderExchangeMenu(setExchange);
 }
 
 function setMarket(mk) {
@@ -311,7 +208,7 @@ function setMarket(mk) {
   // Coinbase is spot-only: fall back to OKX when the user switches to perps.
   if (!exOf(state.exchange)?.markets.includes(mk)) state.exchange = 'okx';
   $('ex-label').textContent = `${exName()} [${mk.toUpperCase()}]`;
-  renderExchangeMenu();
+  renderExchangeMenu(setExchange);
   loadSymbols(state.display);
 }
 
@@ -319,12 +216,12 @@ function setRange(r) {
   state.range = r;
   document.querySelectorAll('#range .seg-b').forEach((b) => b.classList.toggle('active', +b.dataset.range === r));
   invalidate();
-  sendSubscribe(); // some venues (Hyperliquid) need a different aggregation
+  subscribe(); // some venues (Hyperliquid) need a different aggregation
 }
 
 function applyTheme() {
   document.documentElement.dataset.theme = state.theme;
-  $('theme').textContent = state.theme === 'dark' ? '\u2600' : '\u263D';
+  $('theme').textContent = state.theme === 'dark' ? '☀' : '☽';
   invalidate();
 }
 
@@ -339,24 +236,22 @@ function toast(msg) {
 function snapshotPayload() {
   const m = state.metrics;
   if (!m) return null;
-  const meta = {
-    exchange: exName(), exchangeId: state.exchange, market: state.market,
-    symbol: state.display, symbolRaw: state.symbol, range: state.range,
-    transport: exOf(state.exchange)?.transport?.[state.market],
-    tsVenue: state.book?.tsVenue ?? null,
-    tsRecv: state.book?.tsRecv ?? null,
-    ageMs: state.book?.tsRecv ? Date.now() - state.book.tsRecv : null,
-    venueLatencyMs: state.book?.tsVenue != null ? state.book.tsRecv - state.book.tsVenue : null,
-    levels: state.book?.levels, vol24h: state.vol24h,
-  };
+  const now = Date.now();
   return {
-    text: panelRows(m, {
-      exchangeName: exName(), market: state.market, display: state.display, vol24h: state.vol24h,
-      tsVenue: state.book?.tsVenue ?? null, tsRecv: state.book?.tsRecv ?? null,
-    })
-      .map(([l, v]) => `${(l + ':').padEnd(18)}${v}`).join('\n'),
+    text: panelRows(m, meta(now)).map(([l, v]) => `${(l + ':').padEnd(18)}${v}`).join('\n'),
     json: {
-      ...meta,
+      exchange: exName(), exchangeId: state.exchange, market: state.market,
+      symbol: state.display, symbolRaw: state.symbol, range: state.range,
+      transport: exOf(state.exchange)?.transport?.[state.market],
+      tsVenue: state.book?.tsVenue ?? null,
+      tsRecv: state.book?.tsRecv ?? null,
+      ageMs: state.book?.tsRecv ? now - state.book.tsRecv : null,
+      venueLatencyMs: state.book?.tsVenue != null ? state.book.tsRecv - state.book.tsVenue : null,
+      levels: state.book?.levels,
+      vol24h: state.vol24h,
+      // A pasted figure travels without the screen it came from, so the one
+      // thing that says whether the volume is still moving travels with it.
+      vol24hAgeMs: state.volTs != null ? now - state.volTs : null,
       mid: m.mid, bestBid: m.bestBid, bestAsk: m.bestAsk,
       spread: m.spread, spreadPct: m.spreadPct,
       bidVwap: m.bidVwap, bidVwapPct: m.bidVwapPct,
@@ -364,6 +259,11 @@ function snapshotPayload() {
       bidDepth: m.bidDepth, askDepth: m.askDepth, totalDepth: m.totalDepth,
       depthPlus2: m.depthPlus2, depthMinus2: m.depthMinus2,
       depthPlus5: m.depthPlus5, depthMinus5: m.depthMinus5,
+      // Which of those depth figures are FLOORS rather than measurements,
+      // because the book ends before the distance they are quoted at. A number
+      // pasted without this has lost the only thing that qualifies it.
+      lowerBound: m.lowerBound,
+      reach: { bid: m.bid.reach, ask: m.ask.reach },
       imbalance: m.imbalance, imbalanceLabel: m.imbalanceLabel,
     },
   };
@@ -373,9 +273,9 @@ function snapshotPayload() {
 async function init() {
   applyTheme();
   state.catalog = await (await fetch('/api/catalog')).json();
-  renderExchangeMenu();
+  renderExchangeMenu(setExchange);
   $('ex-label').textContent = `${exName()} [${state.market.toUpperCase()}]`;
-  connect();
+  connect(setStatus);
   await loadSymbols();
   requestAnimationFrame(frame);
 }
@@ -395,19 +295,28 @@ window.__depthvizProbe = () => ({
   chart: { w: canvas.clientWidth, h: canvas.clientHeight },
 });
 
+// ------------------------------------------------------------------- wiring
 $('market').onclick = (e) => { const b = e.target.closest('.seg-b'); if (b) setMarket(b.dataset.market); };
 $('range').onclick = (e) => { const b = e.target.closest('.seg-b'); if (b) setRange(+b.dataset.range); };
-$('ex-btn').onclick = (e) => { e.stopPropagation(); const m = $('ex-menu'); const o = m.classList.contains('open'); closeAll(); if (!o) { renderExchangeMenu(); m.classList.add('open'); } };
-$('sym-input').onfocus = () => { $('sym-input').select(); renderSymbolMenu(''); };
-$('sym-input').oninput = (e) => renderSymbolMenu(e.target.value);
+$('ex-btn').onclick = (e) => {
+  e.stopPropagation();
+  const m = $('ex-menu');
+  const wasOpen = m.classList.contains('open');
+  closeAllMenus();
+  if (!wasOpen) { renderExchangeMenu(setExchange); m.classList.add('open'); }
+};
+$('sym-input').onfocus = () => { $('sym-input').select(); renderSymbolMenu('', selectSymbol); };
+$('sym-input').oninput = (e) => renderSymbolMenu(e.target.value, selectSymbol);
 $('sym-input').onkeydown = (e) => {
   if (e.key === 'Enter') {
-    const hits = renderSymbolMenu(e.target.value);
+    const hits = renderSymbolMenu(e.target.value, selectSymbol);
     if (hits.length) selectSymbol(hits[0]);
   } else if (e.key === 'Escape') { closeMenu($('sym-menu')); e.target.blur(); }
 };
+// Deferred, because a pick is a mousedown on a row this would otherwise remove
+// before the pick has been processed.
 $('sym-input').onblur = () => setTimeout(() => { closeMenu($('sym-menu')); $('sym-input').value = state.display || ''; }, 120);
-document.addEventListener('click', closeAll);
+document.addEventListener('click', closeAllMenus);
 
 $('theme').onclick = () => {
   state.theme = state.theme === 'dark' ? 'light' : 'dark';
@@ -448,7 +357,7 @@ let dragId = null;
 canvas.addEventListener('pointerdown', (e) => {
   if (e.pointerType === 'mouse') return;
   dragId = e.pointerId;
-  try { canvas.setPointerCapture(e.pointerId); } catch {}
+  try { canvas.setPointerCapture(e.pointerId); } catch { /* capture is a nicety, not a requirement */ }
   trackHover(e);
 });
 canvas.addEventListener('pointermove', (e) => {

@@ -25,8 +25,6 @@ import { decodeSpotDepth, decodePerpDepth } from '../server/adapters/mexc.js';
 import { sumCandleVolume } from '../server/adapters/bitunix.js';
 import coinbase from '../server/adapters/coinbase.js';
 import lighter from '../server/adapters/lighter.js';
-import bitunix from '../server/adapters/bitunix.js';
-import okx from '../server/adapters/okx.js';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const F = JSON.parse(readFileSync(path.join(here, 'fixtures', 'venues.json'), 'utf8'));

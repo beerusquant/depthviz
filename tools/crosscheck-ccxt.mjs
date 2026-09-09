@@ -141,6 +141,15 @@ return { m1, m2, size, inverse, contracts: contracts === 'true', w,
 process.exit(0);
 `;
 
+const argv = process.argv.slice(2);
+// A single sample is not a verdict: on a thin book, or where the overlap band
+// is only the ~0.02% Hyperliquid's 20 levels span, one read can be 1.7x off
+// purely from the book moving. Three is the cheapest useful median; --repeat
+// buys a real distribution.
+const ri = argv.indexOf('--repeat');
+const REPS = ri >= 0 ? Math.max(1, +argv[ri + 1] || 1) : 3;
+const GAP_MS = ri >= 0 ? 8000 : 4000;
+
 // A child with no bound can hang the entire run, and this one did: on
 // 2026-09-08 a single venue's child sat for over an hour while the twelve
 // behind it waited, and the run produced no verdict at all. The worst case a
@@ -193,14 +202,6 @@ const runWithRetry = async (v) => {
   return { ...second, err: `${second.err} (twice; first: ${first.err})` };
 };
 
-const argv = process.argv.slice(2);
-// A single sample is not a verdict: on a thin book, or where the overlap band
-// is only the ~0.02% Hyperliquid's 20 levels span, one read can be 1.7x off
-// purely from the book moving. Three is the cheapest useful median; --repeat
-// buys a real distribution.
-const ri = argv.indexOf('--repeat');
-const REPS = ri >= 0 ? Math.max(1, +argv[ri + 1] || 1) : 3;
-const GAP_MS = ri >= 0 ? 8000 : 4000;
 const only = argv.find((a) => !a.startsWith('--') && a !== String(REPS));
 const list = only ? VENUES.filter((v) => v.ours[0] === only) : VENUES;
 console.log(`ccxt cross-check — band ±${BAND}% of mid, our live ws vs a ccxt REST snapshot\n`);

@@ -1,6 +1,6 @@
 name: tests
 
-# The eleven suites below need no network beyond loopback and no browser: they are the arithmetic
+# The twelve suites below need no network beyond loopback and no browser: they are the arithmetic
 # the whole app rests on — the resync that decides whether accumulated depth
 # survives, the sequencing engine that decides whether a book advances at all,
 # the watchdog that decides whether a socket is alive, every venue's decoder and
@@ -33,6 +33,23 @@ jobs:
       # ccxt or playwright, so the install stays seconds rather than minutes.
       - run: npm ci --omit=dev
       - run: npm test
+
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      # Not a style gate. Every rule in eslint.config.js is there because it
+      # catches something that passes `node --check` and then fails silently:
+      # a redeclared function whose hoisted twin wins at a call site inside its
+      # own temporal dead zone (which once killed every line of a page's script
+      # after that point), an identifier typo in a branch that only runs when a
+      # venue misbehaves, a value read across an await.
+      - run: npm ci
+      - run: npm run lint
 
   no-html-from-exchanges:
     runs-on: ubuntu-latest

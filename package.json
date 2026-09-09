@@ -27,6 +27,7 @@
   "scripts": {
     "start": "node server/index.js",
     "dev": "node --watch server/index.js",
+    "lint": "eslint .",
     "crosscheck": "node tools/crosscheck-ccxt.mjs",
     "test": "node tools/test-book.mjs && node tools/test-diff-book.mjs && node tools/test-adapters.mjs && node tools/test-conformance.mjs && node tools/test-reconnect.mjs && node tools/test-stitch.mjs && node tools/test-trim.mjs && node tools/test-metrics.mjs && node tools/test-aggregate.mjs && node tools/test-limits.mjs && node tools/test-health.mjs && node tools/test-recording.mjs",
     "verify:bitunix": "node tools/verify-bitunix.mjs",
@@ -45,6 +46,7 @@
   },
   "devDependencies": {
     "ccxt": "^4.5.76",
+    "eslint": "^10.10.0",
     "playwright": "^1.62.1"
   }
 }

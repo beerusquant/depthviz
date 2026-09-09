@@ -24,7 +24,7 @@ const run = ([ex,mk,sym]) => new Promise((res)=>{
     if(m.op==='book'){out.books++;
       {const mid=(m.bids[0][0]+m.asks[0][0])/2;
         const sum=(a)=>a.reduce((s,[p,q])=>s+p*q,0);
-        const span=(a,s)=>a.length?((a[a.length-1][0]/mid-1)*100).toFixed(2)+'%':'-';
+        const span=(a)=>a.length?((a[a.length-1][0]/mid-1)*100).toFixed(2)+'%':'-';
         out.res=`mid=${mid.toFixed(4)} lv=${m.levels[0]}/${m.levels[1]} sent=${m.bids.length}/${m.asks.length} span=${span(m.bids)}..${span(m.asks)} notional=${fmt(sum(m.bids))}/${fmt(sum(m.asks))} vol24=${fmt(m.vol24h)} src=${m.source} clock=${m.tsVenue == null ? 'none' : `venue+${m.tsRecv - m.tsVenue}ms`}`;}
     }});
   ws.on('error',e=>{out.err=`${e.message||e} (${URL})`;clearTimeout(t);res(out)});

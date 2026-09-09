@@ -1,4 +1,4 @@
-import { fmtUsd, fmtPct, fmtPrice, panelRows } from '/shared/metrics.js';
+import { fmtUsd, panelRows } from '/shared/metrics.js';
 
 const THEMES = {
   dark: {
