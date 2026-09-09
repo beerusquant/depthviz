@@ -6,3 +6,4 @@ logs/
 # Recordings are large — an hour of a 10 000-level book is ~650 MB raw — and
 # they are measurements, not source. tools/record.mjs writes here.
 data/
+.github/workflows/ci.yml
