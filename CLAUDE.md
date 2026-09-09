@@ -404,10 +404,26 @@ first). The dollar family is recognised by shape — anything carrying `USD`, pl
 `DAI` — never enumerated: a hand-written list is a list that goes stale the week
 a venue adds a stablecoin, which is exactly how `FDUSD` ended up behind `IDR`.
 
-**Nothing is removed.** A quote nobody asked for sorts last and stays findable,
-because an instrument that only trades against KRW or EUR is a real instrument —
-the same reasoning as `okSymbol` in server/util.js, where a charset allowlist
-would have rejected 31 live symbols to guard a call that was already escaped.
+**And ranking was not enough.** Sorted correctly, typing `SOL` on OKX still put
+the three dollars on top of *fourteen* more rows — SOL/AED, SOL/AUD, SOL/BRL,
+SOL/BTC, SOL/EUR, SOL/TRY, then JITOSOL, OKSOL and RESOLV, which match only
+because their names contain the letters S-O-L. A correct order under fourteen
+rows of noise is still fourteen rows of noise; the first fix shipped and the
+report came back "toujours le problème". So it FILTERS: the base must be the
+ticker that was typed, and the quote must be a dollar.
+
+**The filter decides nothing the viewer cannot undo.** Each rule is lifted, one
+at a time, and only when the stricter answer is empty: a ticker that trades
+against no dollar keeps all its pairs, a half-remembered name falls back to
+prefix and substring matches, and a ticker the venue does not list returns
+nothing rather than its whole listing. Same reasoning as `okSymbol` in
+server/util.js, where a charset allowlist would have rejected 31 live symbols to
+guard a call that was already escaped — refusing to show a real instrument is
+the worse bug, so it is always reachable, just never in front of the answer.
+
+`USDC0`, Hyperliquid's bridged USDC, is a dollar and the shape rule catches it
+without an edit. That is the point of recognising the family rather than listing
+it.
 
 ## 3 ter. A permanent warning is no longer a warning
 

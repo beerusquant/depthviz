@@ -68,13 +68,36 @@ export function scoreSymbol(s, needle) {
 /**
  * The matches for `query`, best first, capped at `limit`.
  *
+ * Ranking was not enough. Typing SOL on OKX put the three dollars on top and
+ * then fourteen more rows — SOL/AED, SOL/AUD, SOL/BRL, SOL/BTC, SOL/EUR,
+ * SOL/TRY, then JITOSOL, OKSOL and RESOLV, which match only because their names
+ * contain the letters S-O-L. Somebody typing a ticker wants that ticker in
+ * dollars, and a correct order under fourteen rows of noise is still fourteen
+ * rows of noise.
+ *
+ * So it FILTERS: the base has to be the thing that was typed, and the quote has
+ * to be a dollar. Both are relaxed rather than enforced, in that order, and
+ * only when the strict answer is empty:
+ *
+ *   1. `SOL`     -> SOL/USDT, SOL/USD, SOL/USDC
+ *   2. `PURR`    -> no dollar pair on Hyperliquid spot? then PURR/USDC is not
+ *                   dropped: the quote rule is lifted and every PURR pair shows
+ *   3. `JITO`    -> no base is exactly JITO? then the base rule is lifted and
+ *                   prefix and substring matches come back, ranked as before
+ *
+ * That is what keeps this from deciding for the viewer. An instrument that only
+ * trades against KRW, or a token whose name they half-remember, still has a
+ * path to the screen — it is just never in front of the answer they asked for.
+ * Same reasoning as `okSymbol` in server/util.js: refusing to show a real
+ * instrument is a worse bug than showing it late.
+ *
  * An empty query is not a search: it is the menu opening, so the listing is
- * shown in the order the venue gave it rather than reordered around a needle
- * that does not exist.
+ * shown in the order the venue gave it, unfiltered.
  */
 export function rankSymbols(symbols, query, limit = 400) {
   const needle = String(query || '').trim().toUpperCase();
   if (!needle) return symbols.slice(0, limit);
+
   const scored = [];
   for (const s of symbols) {
     const sc = scoreSymbol(s, needle);
@@ -83,5 +106,15 @@ export function rankSymbols(symbols, query, limit = 400) {
   // Ties broken by display name so the order is stable between renders: a list
   // that reshuffles under the cursor is a list you cannot click.
   scored.sort((a, b) => a[0] - b[0] || a[1].d.localeCompare(b[1].d));
-  return scored.slice(0, limit).map((x) => x[1]);
+
+  const isTicker = ([, s]) => (s.base || '').toUpperCase() === needle;
+  const isDollar = ([, s]) => isUsdQuote(s.quote);
+
+  // Strictest first, each fallback lifting exactly one rule.
+  const exactAndDollar = scored.filter((x) => isTicker(x) && isDollar(x));
+  const chosen = exactAndDollar.length ? exactAndDollar
+    : scored.filter(isTicker).length ? scored.filter(isTicker)
+      : scored;
+
+  return chosen.slice(0, limit).map((x) => x[1]);
 }

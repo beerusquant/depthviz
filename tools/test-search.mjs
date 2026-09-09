@@ -50,43 +50,77 @@ console.log('quoteRank — dollars first, recognised by shape');
 
 console.log('\nrankSymbols — what typing BTC has to return');
 {
+  // Ranking alone was not enough, and this is the case that proved it: OKX
+  // lists SOL against nine quotes, so a correct ORDER still put six rows of
+  // AED/AUD/BRL/BTC/EUR/TRY plus JITOSOL, OKSOL and RESOLV under the answer.
+  // Somebody typing a ticker wants that ticker in dollars, so it filters.
   const hits = rankSymbols(LISTING, 'BTC');
-  const top3 = hits.slice(0, 3).map((s) => s.d);
-  ok('the first three are the dollars', JSON.stringify(top3) === '["BTC/USDT","BTC/USD","BTC/USDC"]',
-     JSON.stringify(top3));
+  const shown = hits.map((s) => s.d);
+  ok('only BTC priced in dollars comes back',
+     shown.every((d) => d.startsWith('BTC/')) && hits.every((s) => isUsdQuote(s.quote)),
+     shown.join(' '));
+  ok('the three people mean are first, in order',
+     JSON.stringify(shown.slice(0, 3)) === '["BTC/USDT","BTC/USD","BTC/USDC"]', JSON.stringify(shown));
+  ok('and every other dollar is there too, none of them dropped',
+     ['BTC/FDUSD', 'BTC/USD1', 'BTC/USDS'].every((d) => shown.includes(d)), shown.join(' '));
 
-  // The regression that prompted this: BTC is the QUOTE in these, and compare
-  // mode put all seven of them first.
-  const firstQuotedInBtc = hits.findIndex((s) => s.quote === 'BTC');
-  const lastBasedOnBtc = hits.map((s) => s.base).lastIndexOf('BTC');
-  ok('every BTC/x pair comes before every x/BTC pair', firstQuotedInBtc > lastBasedOnBtc,
-     `first x/BTC at ${firstQuotedInBtc}, last BTC/x at ${lastBasedOnBtc}`);
+  // The regression that prompted the first fix: compare mode returned these
+  // seven first, pairs where BTC is the QUOTE.
+  ok('the pairs where BTC is the quote are gone',
+     !hits.some((s) => s.quote === 'BTC'), shown.join(' '));
+  ok('and so are the local currencies',
+     !['BTC/ARS', 'BTC/BRL', 'BTC/IDR', 'BTC/JPY', 'BTC/TRY', 'BTC/EUR', 'BTC/U'].some((d) => shown.includes(d)),
+     shown.join(' '));
+  ok('six rows, not twenty-one', hits.length === 6, `${hits.length} of ${LISTING.length}`);
+}
 
-  // Dollars that are not the famous three still beat pesos.
-  const at = (d) => hits.findIndex((s) => s.d === d);
-  ok('FDUSD, USDS and USD1 rank above ARS, BRL and IDR',
-     Math.max(at('BTC/FDUSD'), at('BTC/USDS'), at('BTC/USD1'))
-     < Math.min(at('BTC/ARS'), at('BTC/BRL'), at('BTC/IDR')),
-     hits.slice(0, 10).map((s) => s.d).join(' '));
+console.log('\nrankSymbols — the two fallbacks, so nothing is unreachable');
+{
+  // Filtering must not decide FOR the viewer. Each rule is lifted, one at a
+  // time, only when the stricter answer is empty.
 
-  // Nothing is removed: an instrument that only trades against a local currency
-  // has to stay findable, or the search has decided for the viewer.
-  ok('the quotes nobody asked for are still there, just last',
-     ['BTC/TRY', 'BTC/ARS', 'BTC/JPY', 'BTC/EUR'].every((d) => at(d) >= 0),
-     hits.map((s) => s.d).join(' '));
-  ok('and so are the pairs where BTC is the quote', at('AAVE/BTC') >= 0);
-  ok('nothing is lost overall', hits.length === LISTING.length, `${hits.length} of ${LISTING.length}`);
+  // 1. The ticker exists but trades against no dollar at all. `USDC0` — the
+  //    bridged USDC on Hyperliquid — deliberately does NOT count as "no dollar":
+  //    it carries USD, so the shape rule catches it and the strict filter holds.
+  const bridged = rankSymbols([sym('PURR', 'USDC0'), sym('PURR', 'HYPE')], 'PURR').map((s) => s.d);
+  ok('a bridged dollar is still a dollar, so the strict filter stands',
+     JSON.stringify(bridged) === '["PURR/USDC0"]', JSON.stringify(bridged));
+
+  const noDollar = [sym('WHYPE', 'HYPE'), sym('WHYPE', 'PURR'), sym('OTHER', 'USDT')];
+  const whype = rankSymbols(noDollar, 'WHYPE').map((s) => s.d);
+  ok('a ticker with no dollar pair at all still comes back, quote rule lifted',
+     whype.length === 2 && whype.includes('WHYPE/HYPE'), JSON.stringify(whype));
+  ok('and it is still only that ticker', whype.every((d) => d.startsWith('WHYPE/')), JSON.stringify(whype));
+
+  // 2. No base matches exactly — a half-remembered name.
+  const jito = rankSymbols([sym('JITOSOL', 'USDT'), sym('SOL', 'USDT')], 'JITO').map((s) => s.d);
+  ok('a partial name falls back to prefix and substring matches',
+     JSON.stringify(jito) === '["JITOSOL/USDT"]', JSON.stringify(jito));
+
+  // 3. Typing a ticker no venue lists returns nothing, not everything. A venue
+  //    that does not have it must say so rather than offer its whole listing.
+  ok('a ticker the venue does not list returns nothing',
+     rankSymbols([sym('SOL', 'USDT')], 'JITO').length === 0);
+
+  // The fallbacks are ordered: an exact base with no dollar beats a prefix
+  // match that has one, because the ticker is what was asked for.
+  const mixed = [sym('RAY', 'TRY'), sym('RAYDIUM', 'USDT')];
+  ok('an exact base with no dollar still beats a prefix match with one',
+     JSON.stringify(rankSymbols(mixed, 'RAY').map((s) => s.d)) === '["RAY/TRY"]',
+     JSON.stringify(rankSymbols(mixed, 'RAY').map((s) => s.d)));
 }
 
 console.log('\nrankSymbols — the other queries people type');
 {
-  // The case the old comment in menus.js named: RAY/USDT, not RAY/TRY.
+  // The case the old comment in menus.js named: RAY/USDT, not RAY/TRY — and now
+  // RAY/TRY is not shown at all, because RAY has a dollar pair.
   const listing = [sym('RAY', 'TRY'), sym('RAY', 'USDT'), sym('RAYDIUM', 'USDT'), sym('XRAY', 'USDT')];
   const hits = rankSymbols(listing, 'RAY').map((s) => s.d);
-  ok('an exact base beats a longer one that starts the same',
-     hits[0] === 'RAY/USDT' && hits[1] === 'RAY/TRY', JSON.stringify(hits));
-  ok('and a prefix beats a substring elsewhere',
-     hits.indexOf('RAYDIUM/USDT') < hits.indexOf('XRAY/USDT'), JSON.stringify(hits));
+  ok('an exact base wins outright', JSON.stringify(hits) === '["RAY/USDT"]', JSON.stringify(hits));
+  // ...and with no exact base, the prefix still beats the substring.
+  const partial = rankSymbols([sym('XRAY', 'USDT'), sym('RAYDIUM', 'USDT')], 'RAY').map((s) => s.d);
+  ok('a prefix beats a substring elsewhere',
+     partial.indexOf('RAYDIUM/USDT') < partial.indexOf('XRAY/USDT'), JSON.stringify(partial));
 
   // Lowercase, and the raw venue symbol rather than the display name: Bitunix
   // lists its spot pairs lowercase.
@@ -95,9 +129,10 @@ console.log('\nrankSymbols — the other queries people type');
   ok('and it matches the raw venue symbol too',
      rankSymbols([{ s: 'BTC-USDT-SWAP', d: 'BTC/USDT', base: 'BTC', quote: 'USDT' }], 'SWAP').length === 1);
 
-  // An empty query is the menu opening, not a search: the listing order stands.
+  // An empty query is the menu opening, not a search: the listing order stands
+  // and nothing is filtered out of it.
   const empty = rankSymbols(LISTING, '');
-  ok('an empty query does not reorder the listing',
+  ok('an empty query does not reorder or filter the listing',
      empty[0].d === LISTING[0].d && empty.length === LISTING.length);
   ok('a query nothing matches returns nothing, not everything',
      rankSymbols(LISTING, 'ZZZZ').length === 0);
