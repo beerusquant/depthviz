@@ -236,6 +236,14 @@ the pair the way the adapter takes it.
 - **Neither a `SKIP` nor an `INCONC` counts as a pass.** Both are an absence of
   proof and exit non-zero. On a day when everything skips, the summary must not
   say "all good" — it said that once, and it was false.
+- **A check that fails has to say WHY, not just that.** `verify-bitunix` reported
+  `only 0/10 readings` and nothing else — the same sentence for a rate-limited
+  request, a refused connection, a venue that stopped answering, and an adapter
+  that simply had not measured yet. Four problems, four different fixes, one
+  message, and an evening spent guessing on 2026-09-09 before the check turned
+  out to be intermittent and passed on its own. It counts the reasons now and
+  prints the breakdown with the URL. A `catch {}` around a sample is how a check
+  becomes an oracle nobody can question.
 - **A check that never returns is worse than one that fails.** No verdict, no
   log line, no exit code — just a unit sitting there until systemd kills it
   silently. Measured on 2026-09-08: `crosscheck-ccxt` spawns a child per venue

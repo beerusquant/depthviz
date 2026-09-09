@@ -136,16 +136,31 @@ console.log(`Bitunix independent checks — ${SYMBOL}\n`);
 {
   const N = 10, EVERY_MS = 6000;   // the adapter refreshes drift every 5 s
   const seen = [];
+  // Why a reading is missing, counted. Without this the check said "0/10
+  // readings" and nothing else, which is the same sentence for a rate-limited
+  // request, a refused connection, a venue that stopped answering, and an
+  // adapter that simply has not measured yet — four different problems with
+  // four different fixes. It cost an evening of guessing on 2026-09-09, and
+  // this repo already has the rule: a failure names the URL it actually tried.
+  const why = new Map();
+  const note = (r) => why.set(r, (why.get(r) ?? 0) + 1);
+  const url = `${HTTP}/api/depth?exchange=bitunix&market=perp&symbol=${SYMBOL}&range=2`;
   for (let i = 0; i < N; i++) {
     if (i) await new Promise((r) => setTimeout(r, EVERY_MS));
     try {
-      const d = (await j(`${HTTP}/api/depth?exchange=bitunix&market=perp&symbol=${SYMBOL}&range=2`)).drift;
-      if (typeof d === 'number') seen.push(d);
-    } catch { /* counted as a missing sample below */ }
+      const r = await fetch(url, { headers: { 'User-Agent': 'depthviz/1.0' } });
+      if (!r.ok) { note(`HTTP ${r.status}${r.status === 429 ? ` (Retry-After ${r.headers.get('retry-after') || '?'}s)` : ''}`); continue; }
+      const b = await r.json();
+      if (typeof b.drift === 'number') seen.push(b.drift);
+      else if (b.error) note(`server said: ${b.error}`);
+      else note('drift was null — the adapter has not compared the two transports yet');
+    } catch (e) { note(e.message); }
   }
   if (seen.length < N / 2) {
     fails++;
-    console.log(`  INCONC ws-vs-REST drift\n       only ${seen.length}/${N} readings — not enough to take a median`);
+    const breakdown = [...why].map(([r, n]) => `${n}x ${r}`).join('; ') || 'no reason recorded';
+    console.log(`  INCONC ws-vs-REST drift\n       only ${seen.length}/${N} readings — not enough to take a median`
+              + `\n       ${breakdown}\n       ${url}`);
   } else {
     const v = [...seen].sort((a, b) => a - b);
     const med = v[Math.floor(v.length / 2)];
