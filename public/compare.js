@@ -2,6 +2,7 @@ import { computeMetrics, panelRows, fmtPrice, fmtBps } from '/shared/metrics.js'
 import { draw } from './chart.js';
 import { createFeed } from './feed.js';
 import { applyStoredTheme, applyTheme } from './theme.js';
+import { rankSymbols } from './search.js';
 
 /**
  * Compare mode: any books, stacked, each with its own panel and curve.
@@ -309,17 +310,10 @@ async function loadSymbols() {
   }
 }
 
-function matches(q) {
-  const needle = q.trim().toUpperCase();
-  if (!needle) return state.symbols.slice(0, 200);
-  const out = [];
-  for (const s of state.symbols) {
-    const d = s.d.toUpperCase();
-    if (d.startsWith(needle) || d.includes(needle) || s.s.toUpperCase().includes(needle)) out.push(s);
-    if (out.length >= 200) break;
-  }
-  return out;
-}
+// The same ranking single mode uses. This used to be a bare substring filter,
+// so typing "BTC" here returned AAVE/BTC and ADA/BTC — pairs where BTC is the
+// quote — and BTC/USDT was nowhere in the first dozen rows.
+const matches = (q) => rankSymbols(state.symbols, q, 200);
 
 function renderAddMenu(q) {
   const el = $('add-menu');

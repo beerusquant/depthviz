@@ -1,4 +1,5 @@
 import { $, state } from './state.js';
+import { rankSymbols } from './search.js';
 
 /**
  * The two dropdowns, and the ranking that makes the symbol one usable.
@@ -44,23 +45,6 @@ export function renderExchangeMenu(onPick) {
   }
 }
 
-const QUOTE_RANK = { USDT: 0, USD: 1, USDC: 2, USDE: 3, EUR: 6 };
-
-/** Rank matches so typing "RAY" lands on RAY/USDT, not RAY/TRY. */
-export function scoreSymbol(s, needle) {
-  const base = s.base.toUpperCase();
-  const d = s.d.toUpperCase();
-  const raw = s.s.toUpperCase();
-  let hit;
-  if (base === needle) hit = 0;
-  else if (base.startsWith(needle)) hit = 1;
-  else if (d.startsWith(needle)) hit = 2;
-  else if (d.includes(needle)) hit = 3;
-  else if (raw.includes(needle)) hit = 4;
-  else return null;
-  return hit * 10 + (QUOTE_RANK[s.quote?.toUpperCase()] ?? 5);
-}
-
 // Some venues list ten thousand pairs; the menu shows the best of them and the
 // search is what reaches the rest.
 const MAX_ROWS = 400;
@@ -68,19 +52,7 @@ const MAX_ROWS = 400;
 /** Render the symbol menu for query `q`, and return the rows it is showing. */
 export function renderSymbolMenu(q = '', onPick) {
   const el = $('sym-menu');
-  const needle = q.trim().toUpperCase();
-  let hits;
-  if (!needle) {
-    hits = state.symbols.slice(0, MAX_ROWS);
-  } else {
-    const scored = [];
-    for (const s of state.symbols) {
-      const sc = scoreSymbol(s, needle);
-      if (sc !== null) scored.push([sc, s]);
-    }
-    scored.sort((a, b) => a[0] - b[0] || a[1].d.localeCompare(b[1].d));
-    hits = scored.slice(0, MAX_ROWS).map((x) => x[1]);
-  }
+  const hits = rankSymbols(state.symbols, q, MAX_ROWS);
   el.replaceChildren();
   if (!hits.length) {
     const empty = document.createElement('div');

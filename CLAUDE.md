@@ -367,6 +367,34 @@ chart showed **0.152 of the real depth**. A hole, not a rounding error.
 - `npm run verify:hyperliquid` and `tools/test-stitch.mjs` guard both
   properties.
 
+## 2 decies. A search that does not rank is a search that answers the wrong question
+
+Typing a ticker has one obvious intended answer, and the listings do not give
+it: Binance spot alone lists BTC against fourteen quote currencies — ARS, BRL,
+EUR, FDUSD, IDR, JPY, MXN, TRY, U, USD, USD1, USDC, USDS, USDT. Measured on
+2026-09-09:
+
+    compare mode, "BTC"  ->  AAVE/BTC ADA/BTC ARB/BTC ATOM/BTC AVAX/BTC ...
+    single mode,  "BTC"  ->  BTC/USDT BTC/USD BTC/USDC BTC/ARS BTC/BRL BTC/IDR ...
+
+Compare mode had **no ranking at all** — a bare substring filter, so it returned
+the pairs where BTC is the QUOTE first. Single mode ranked three dollars by a
+hand-written table and then treated `FDUSD`, `USDS` and `USD1` — all dollars —
+as noise behind Argentine pesos.
+
+`public/search.js` is the one ranking both use, and it has no DOM so
+`tools/test-search.mjs` can pin it. Two rules, in order: **where it matched**
+(an exact base beats a prefix beats a substring, and any base match beats a pair
+that merely contains the letters), then **what it is priced in** (dollars
+first). The dollar family is recognised by shape — anything carrying `USD`, plus
+`DAI` — never enumerated: a hand-written list is a list that goes stale the week
+a venue adds a stablecoin, which is exactly how `FDUSD` ended up behind `IDR`.
+
+**Nothing is removed.** A quote nobody asked for sorts last and stays findable,
+because an instrument that only trades against KRW or EUR is a real instrument —
+the same reasoning as `okSymbol` in server/util.js, where a charset allowlist
+would have rejected 31 live symbols to guard a call that was already escaped.
+
 ## 3 ter. A permanent warning is no longer a warning
 
 The note under the chart appears **only when the book does not reach the
@@ -516,6 +544,7 @@ A change that was not executed does not exist. Depending on what you touch:
 | Bitunix (absent from ccxt) | `npm run verify:bitunix` |
 | `reconnectingWs`, a socket's lifecycle | `node tools/test-reconnect.mjs` — both halves: a dead path is dropped, a quiet-but-answering one is not |
 | the UI, the layout, the transport | `node tools/smoke-feeds.mjs`, and `smoke-ui.mjs` if the rendering moves — it drives all three modes, and a mode nobody drives is a mode that breaks silently |
+| `public/search.js`, the instrument menus | `node tools/test-search.mjs` **and** the real listings: typing `BTC` must put the dollars first on every venue that has them |
 | `shared/metrics.js`, `/api/depth` | `npm test` **and** a `curl` of the route — the browser and the API share one implementation, so a change to it moves both |
 
 `smoke-feeds.mjs` prints a `clock=` column per venue: `venue+NNms` where the

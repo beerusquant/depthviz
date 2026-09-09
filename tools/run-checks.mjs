@@ -33,6 +33,7 @@ const CHECKS = [
   ['reconnect tests', ['tools/test-reconnect.mjs']],
   ['stitch tests',    ['tools/test-stitch.mjs']],
   ['trim tests',      ['tools/test-trim.mjs']],
+  ['search tests',    ['tools/test-search.mjs']],
   ['metrics tests',   ['tools/test-metrics.mjs']],
   ['aggregate tests', ['tools/test-aggregate.mjs']],
   ['limit tests',     ['tools/test-limits.mjs']],

@@ -226,7 +226,8 @@ shared/metrics.js   every number on screen and in /api/depth — one implementat
 public/index.html   the mode chooser
 public/state.js     what a page knows, and the one way anything asks to be redrawn
 public/feed.js      one websocket carrying one book — a factory, because two modes hold several
-public/menus.js     the two dropdowns and the ranking that makes the symbol one usable
+public/menus.js     the two dropdowns
+public/search.js    the instrument ranking — dollars first, base before quote, nothing removed
 public/theme.js     the stored theme, shared by all four pages
 public/app.js       single mode
 public/combined.js  combined mode: one ticker, every venue, one price axis
