@@ -114,6 +114,7 @@ export default {
     let tailAsks = [];
     let stopped = false;
     let drift = null;        // last measured ws-vs-rest disagreement over the overlap
+    let driftTs = null;      // and when that measurement was actually taken
     let breaches = 0;
     // Held so close() can clear it. A flag alone stops the NEXT poll but leaves
     // the pending one holding the event loop, which is a second of shutdown per
@@ -153,40 +154,12 @@ export default {
       return out;
     };
 
-    const pollFull = async () => {
-      if (stopped) return;
-      try {
-        const j = await fetchJson(`${REST}/api/v5/market/books-full?instId=${encodeURIComponent(s)}&sz=5000`);
-        const d = j.code === '0' ? j.data?.[0] : null;
-        if (d) {
-          tailBids = tailOf(d.bids || [], false);
-          tailAsks = tailOf(d.asks || [], true);
-          // The two transports overlap on the socket's own 400 levels and are
-          // never otherwise compared. Cumulative size over that overlap is a
-          // free check that the incremental book has not drifted from the
-          // venue's own view — the failure a seq counter cannot catch.
-          drift = measureDrift();
-          if (drift !== null && drift > DRIFT_TOLERANCE) {
-            // One breach is the two reads landing either side of a busy tick;
-            // a run of them is the socket book actually being wrong.
-            if (++breaches >= DRIFT_BREACHES) {
-              breaches = 0;
-              status('reconnecting', `OKX ws/REST books disagree by ${(drift * 100).toFixed(1)}% over the overlap, resyncing`);
-              conn.send({ op: 'unsubscribe', args: [{ channel: 'books', instId: s }] });
-              conn.send({ op: 'subscribe', args: [{ channel: 'books', instId: s }] });
-            }
-          } else breaches = 0;
-        }
-      } catch { /* keep the previous tail; the ws book is unaffected */ }
-      if (!stopped) pollTimer = setTimeout(pollFull, 1000);
-    };
-
     // Every update is applied immediately; the merge with the polled tail and
     // the two sorts it needs run only on the frames that are shipped.
     const publish = coalesce((ts) => stopped || emit({
       bids: merge(bids.toArray(), tailBids, (p, e) => p < e),
       asks: merge(asks.toArray(), tailAsks, (p, e) => p > e),
-      ts, source: 'ws', drift,
+      ts, source: 'ws', drift, driftTs,
     }), PUBLISH_MS);
 
   // The one seam here: tests drive this adapter through a fake transport
@@ -208,11 +181,7 @@ export default {
           if (msg.action === 'snapshot') {
             bids.clear(); asks.clear();
           } else if (seq !== null && d.prevSeqId !== undefined && +d.prevSeqId !== seq) {
-            // sequence gap -> force a fresh snapshot
-            status('reconnecting', 'OKX book sequence gap, resyncing');
-            conn.send({ op: 'unsubscribe', args: [{ channel: 'books', instId: s }] });
-            conn.send({ op: 'subscribe', args: [{ channel: 'books', instId: s }] });
-            seq = null;
+            resubscribe('OKX book sequence gap, resyncing');
             return;
           }
           apply(bids, d.bids || []);
@@ -224,11 +193,66 @@ export default {
       onStatus: status,
     }, { pingMs: 20_000, pingPayload: 'ping' });
 
-    // Started only now: pollFull() reaches for `conn` to force a resubscribe when
-    // the two transports disagree, and for measureDrift() to compare them. Both
-    // used to be declared below this call and were saved only by the first
-    // `await` landing after the rest of the function had run — a temporal dead
-    // zone waiting for someone to add an early return.
+    /**
+     * Drop the channel and take it again: the only way this venue offers to get
+     * a fresh snapshot. Both callers below want exactly this, and it used to be
+     * written out twice.
+     *
+     * A `function` declaration on purpose, and it is the reason both of these
+     * live BELOW `conn` now. They reach for it, and as `const` arrows above it
+     * they sat in its temporal dead zone — safe only because the first `await`
+     * in pollFull landed after the rest of open() had run. That is a bug
+     * waiting for someone to add an early return, and it is the same shape as
+     * the one that silently killed a whole page's scripts in dashboard-mm.
+     * Hoisted declarations here cannot be reached before `conn` exists, because
+     * nothing calls them until a socket that does not yet exist says something.
+     */
+    function resubscribe(why) {
+      status('reconnecting', why);
+      conn.send({ op: 'unsubscribe', args: [{ channel: 'books', instId: s }] });
+      conn.send({ op: 'subscribe', args: [{ channel: 'books', instId: s }] });
+      // Deliberately on BOTH paths, which the two copies this replaces were not
+      // agreed on: the sequence-gap one cleared `seq`, the drift one did not.
+      // Frames from the old subscription keep arriving through the unsubscribe
+      // handshake, and with `seq` still set the first of them fails the
+      // contiguity test and triggers a second resubscribe — the asymmetry was
+      // an omission, not an intent. `seq` picks up again from the snapshot the
+      // venue sends on resubscribing, and gap detection resumes with it.
+      seq = null;
+    }
+
+    async function pollFull() {
+      if (stopped) return;
+      try {
+        const j = await fetchJson(`${REST}/api/v5/market/books-full?instId=${encodeURIComponent(s)}&sz=5000`);
+        const d = j.code === '0' ? j.data?.[0] : null;
+        if (d) {
+          tailBids = tailOf(d.bids || [], false);
+          tailAsks = tailOf(d.asks || [], true);
+          // The two transports overlap on the socket's own 400 levels and are
+          // never otherwise compared. Cumulative size over that overlap is a
+          // free check that the incremental book has not drifted from the
+          // venue's own view — the failure a seq counter cannot catch.
+          //
+          // Only a real reading moves the pair: the catch below keeps the
+          // previous value on purpose — the ws book is unaffected by a failed
+          // REST read — and without a stamp beside it, a ten-minute-old
+          // measurement was indistinguishable from one taken a second ago.
+          const measured = measureDrift();
+          if (measured !== null) { drift = measured; driftTs = Date.now(); }
+          if (drift !== null && drift > DRIFT_TOLERANCE) {
+            // One breach is the two reads landing either side of a busy tick;
+            // a run of them is the socket book actually being wrong.
+            if (++breaches >= DRIFT_BREACHES) {
+              breaches = 0;
+              resubscribe(`OKX ws/REST books disagree by ${(drift * 100).toFixed(1)}% over the overlap, resyncing`);
+            }
+          } else breaches = 0;
+        }
+      } catch { /* keep the previous tail; the ws book is unaffected */ }
+      if (!stopped) pollTimer = setTimeout(pollFull, 1000);
+    }
+
     pollFull();
 
     return { close() { stopped = true; clearTimeout(pollTimer); publish.cancel(); conn.close(); } };

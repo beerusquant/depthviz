@@ -120,7 +120,12 @@ class Feed {
     this.payloadSeq = -1;
     this.cached = null;
     this.vol = null;
+    this.volTs = null;         // when vol24h was last actually read, not asked for
     this.lastSent = 0;
+    // Resolved by the next accepted book. `/api/depth` used to poll this feed
+    // every 50 ms waiting for one, which is up to 50 ms of latency added to
+    // every REST call for a value the feed already had.
+    this.waiters = [];
     this.pendingTimer = null;
     this.lingerTimer = null;
     // Health counters, surfaced by /api/feeds. A feed that quietly reconnects
@@ -130,6 +135,10 @@ class Feed {
     this.errors = 0;
     this.dropped = 0;
     this.books = 0;
+    // Books an adapter published and this feed refused. A refused book is not a
+    // book that never came: one leaves `ageMs` growing with an explanation, the
+    // other leaves it growing with none, and they need different fixes.
+    this.rejected = { empty: 0, crossed: 0, badMid: 0 };
     this.openedAt = Date.now();
     this.history = new Ring(SAMPLES);
 
@@ -148,9 +157,17 @@ class Feed {
     this.volTimer = setInterval(() => this.refreshVol(), 30_000);
   }
 
+  /**
+   * Volume is decoration: a failure here must never kill a feed whose book is
+   * healthy. But a swallowed failure leaves the LAST value standing, and a
+   * figure that has not moved in an hour looked exactly like one read a second
+   * ago. The stamp is what tells them apart, and it moves only on a success.
+   */
   async refreshVol() {
-    try { this.vol = await adapters[this.exchange].vol24h(this.market, this.symbol); }
-    catch { /* volume is decoration; a failure must not kill the feed */ }
+    try {
+      this.vol = await adapters[this.exchange].vol24h(this.market, this.symbol);
+      this.volTs = Date.now();
+    } catch { /* keep the previous reading, and let volTs age */ }
   }
 
   onStatus(st, detail) {
@@ -164,10 +181,27 @@ class Feed {
     this.broadcast({ op: 'status', state: next, detail: this.detail });
   }
 
-  onBook({ bids, asks, ts, source, accum, drift }) {
-    if (!bids.length || !asks.length) return;
+  /**
+   * The one gate every book passes through, and the only place a bad one dies.
+   *
+   * Three refusals, each counted rather than silent. A one-sided book has no
+   * mid; a non-positive mid has no arithmetic; and a CROSSED book — best bid at
+   * or above best ask — is what a mis-sequenced diff stream looks like from the
+   * outside. Nothing downstream would have noticed the last one: a mid computed
+   * inside a negative spread is a plausible number, the spread renders as
+   * -2.00%, and both depth curves are drawn over a price range they share. The
+   * chart stays beautiful, which is this repo's definition of the worst kind of
+   * bug.
+   *
+   * Refusing it freezes the feed rather than advancing it with a wrong book,
+   * and that is the intended trade: `ageMs` then grows where anybody looking
+   * can see it, and `rejected` says which of the three it was.
+   */
+  onBook({ bids, asks, ts, source, accum, drift, driftTs }) {
+    if (!bids.length || !asks.length) { this.rejected.empty++; return; }
     const mid = (bids[0][0] + asks[0][0]) / 2;
-    if (!(mid > 0)) return;
+    if (!(mid > 0)) { this.rejected.badMid++; return; }
+    if (!(bids[0][0] < asks[0][0])) { this.rejected.crossed++; return; }
     this.books++;
     // Two clocks, never conflated. `tsVenue` is the exchange's own event time
     // and is null on the feeds that do not stamp their frames (Bitunix's spot
@@ -192,10 +226,18 @@ class Feed {
       source,
       levels: [bids.length, asks.length],
       accum: accum || null,
+      // An integrity measurement and the instant it was taken. OKX and Bitunix
+      // compare their stream against the venue's own REST book, and both
+      // swallow a failed read to protect the stream — so the previous value
+      // stands, and a ten-minute-old disagreement of 0.1% was indistinguishable
+      // from one measured a second ago. The stamp is the difference; it is the
+      // adapter's clock, so it is never null while `drift` is a number.
       drift: drift ?? null,
+      driftTs: drift == null ? null : (driftTs ?? null),
     };
     this.rawSeq++;
     if (this.state !== 'live') { this.state = 'live'; this.broadcast({ op: 'status', state: 'live', detail: '' }); }
+    for (const r of this.waiters.splice(0)) r();
     this.schedule();
   }
 
@@ -224,6 +266,7 @@ class Feed {
         levels: r.levels,
         accum: r.accum,
         drift: r.drift,
+        driftTs: r.driftTs,
       };
     }
     return this.cached;
@@ -240,7 +283,7 @@ class Feed {
       // fresh but do not pay to reduce it for an audience of zero.
       if (!this.clients.size) return;
       const p = this.payload();
-      if (p) this.broadcast({ ...p, vol24h: this.vol });
+      if (p) this.broadcast({ ...p, vol24h: this.vol, volTs: this.volTs });
     }, wait);
   }
 
@@ -263,7 +306,7 @@ class Feed {
     this.ownerOf.set(client, owner);
     client.send(JSON.stringify({ op: 'status', state: this.state, detail: this.detail }));
     const p = this.payload();
-    if (p) client.send(JSON.stringify({ ...p, vol24h: this.vol }));
+    if (p) client.send(JSON.stringify({ ...p, vol24h: this.vol, volTs: this.volTs }));
   }
 
   remove(client) {
@@ -292,6 +335,7 @@ class Feed {
       reconnects: this.reconnects,
       errors: this.errors,
       droppedFrames: this.dropped,
+      rejectedBooks: this.rejected.empty + this.rejected.crossed + this.rejected.badMid,
       clients: this.clients.size,
       ageMs: this.raw ? now - this.raw.tsRecv : null,
       venueLatencyMs: this.raw?.tsVenue != null ? this.raw.tsRecv - this.raw.tsVenue : null,
@@ -300,6 +344,9 @@ class Feed {
 
   destroy() {
     this.closed = true;
+    // Anything blocked on the next book has to be let go, or a /api/depth call
+    // outlives the feed it was waiting for and only ends on its own timeout.
+    for (const r of this.waiters.splice(0)) r();
     clearInterval(this.volTimer);
     clearTimeout(this.lingerTimer);
     if (this.pendingTimer) clearTimeout(this.pendingTimer);
@@ -327,8 +374,7 @@ export function subscribe(client, { exchange, market, symbol, range }, currentFe
   // anyway, so a caller cannot widen the work this server does by asking for
   // ±1e9 — but it also must not reach the arithmetic as NaN or a negative.
   const opts = { range: Math.min(50, Math.max(0.01, +range || 2)) };
-  const extra = ad.subKey ? ad.subKey(market, symbol, opts) : '';
-  const key = `${exchange}:${market}:${symbol}:${extra}`;
+  const key = `${exchange}:${market}:${symbol}`;
   // A range change that does not alter the upstream subscription must not
   // tear the feed down and rebuild it.
   if (currentFeed && currentFeed.key === key) return currentFeed;
@@ -386,6 +432,9 @@ export function stats({ history = false } = {}) {
       reconnects: f.reconnects,
       errors: f.errors,
       droppedFrames: f.dropped,
+      rejected: { ...f.rejected },
+      volAgeMs: f.volTs == null ? null : now - f.volTs,
+      driftAgeMs: f.raw?.driftTs == null ? null : now - f.raw.driftTs,
       upMs: now - f.openedAt,
       window: summarize(samples),
       ...(history ? { history: samples } : {}),
@@ -411,13 +460,25 @@ export async function snapshot({ exchange, market, symbol, range, owner = 'local
   const client = { send() {}, bufferedAmount: 0, owner }; // a listener without a socket
   const feed = subscribe(client, { exchange, market, symbol, range });
   try {
-    const deadline = Date.now() + timeoutMs;
-    while (!feed.raw && Date.now() < deadline) {
-      if (feed.state === 'error') throw new Error(feed.detail || `${exchange} feed error`);
-      await new Promise((r) => setTimeout(r, 50));
+    // Woken by onBook rather than polled. The old loop slept 50 ms at a time,
+    // so a feed that already had a book still answered up to 50 ms late and one
+    // that was opening answered up to 50 ms after it was ready — latency this
+    // route invented for itself, on every call, on top of the exchange's.
+    if (!feed.raw) {
+      let timer;
+      await Promise.race([
+        new Promise((r) => feed.waiters.push(r)),
+        new Promise((r) => { timer = setTimeout(r, timeoutMs); }),
+      ]).finally(() => clearTimeout(timer));
     }
-    if (!feed.raw) throw new Error(`no book from ${exchange} ${market} ${symbol} within ${timeoutMs}ms`);
-    return { ...feed.payload(), vol24h: feed.vol, raw: feed.raw };
+    if (!feed.raw) {
+      // A feed that failed says why; one that is merely slow cannot, and the
+      // two must not share a message.
+      throw new Error(feed.state === 'error' && feed.detail
+        ? feed.detail
+        : `no book from ${exchange} ${market} ${symbol} within ${timeoutMs}ms`);
+    }
+    return { ...feed.payload(), vol24h: feed.vol, volTs: feed.volTs, raw: feed.raw };
   } finally {
     feed.remove(client);
   }

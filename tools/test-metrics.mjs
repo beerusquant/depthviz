@@ -7,7 +7,7 @@
  * of bid depth" was never checked against anything.
  *   node tools/test-metrics.mjs
  */
-import { computeMetrics, fmtUsd, fmtPct, fmtBps, fmtAge, panelRows, IMBALANCE_THRESHOLD } from '../shared/metrics.js';
+import { computeMetrics, fmtUsd, fmtPct, fmtBps, fmtAge, fmtVol, panelRows, IMBALANCE_THRESHOLD, VOL_STALE_MS } from '../shared/metrics.js';
 
 let pass = 0, fail = 0;
 const ok = (name, cond, detail = '') => {
@@ -162,6 +162,127 @@ const book = {
   const short = computeMetrics({ bids: [[99.99, 1]], asks: [[100.01, 1]] }, 2);
   ok('a book that stops short is not extended', short.ask.pts.at(-1)[0] < 2 && short.shortAsk,
      JSON.stringify(short.ask.pts));
+}
+
+// A crossed book is not a book, and every figure below would still compute one.
+// This is the shape a mis-sequenced diff stream takes, and it renders as a
+// perfectly plausible chart: a mid inside a negative spread, a spread of -2%,
+// two depth curves drawn over prices they share.
+{
+  const crossed = { bids: [[101, 1], [100, 2]], asks: [[99, 1], [102, 2]] };
+  ok('a crossed book yields no metrics at all', computeMetrics(crossed, 2) === null);
+  const touching = { bids: [[100, 1]], asks: [[100, 1]] };
+  ok('and a zero-width book is refused too, not treated as a tight one',
+     computeMetrics(touching, 2) === null);
+  ok('an ordinary book is untouched by that guard', computeMetrics(book, 2) !== null);
+}
+
+// `reach` is what a caller reads to decide whether a figure is usable. It used
+// to be the walk's own loop bound: a book reaching ±12% reported exactly 5.000
+// at any range under 5, and the field is documented as how far the book goes.
+{
+  const deep = { bids: [], asks: [] };
+  for (let i = 1; i <= 1200; i++) {
+    deep.asks.push([100 * (1 + i * 0.0001), 1]);
+    deep.bids.push([100 * (1 - i * 0.0001), 1]);
+  }
+  const m = computeMetrics(deep, 2);
+  ok('reach is the book\'s, not the loop\'s bound', near(m.ask.reach, 12, 1e-6), `${m.ask.reach}`);
+  ok('and it is symmetric on a symmetric book', near(m.bid.reach, m.ask.reach, 1e-6));
+  ok('the range asked for does not change it',
+     near(computeMetrics(deep, 10).ask.reach, m.ask.reach, 1e-12));
+  // The break that bounds the walk must still bound it: the figures inside the
+  // window are unaffected by levels beyond max(range, 5).
+  ok('and the walked figures are unchanged', near(m.depthPlus2, computeMetrics(deep, 5).depthPlus2));
+}
+
+// Bitunix caps its spot book at 50 levels — about ±0.05% of mid — so `-2% Depth`,
+// `-5% Depth` and `Total Depth` were the same number printed three times as
+// three different measurements, with nothing to say so.
+{
+  const shallow = { bids: [[99.99, 10], [99.95, 10]], asks: [[100.01, 10], [100.05, 10]] };
+  const m = computeMetrics(shallow, 0.05);
+  ok('a book that stops at ±0.05% still reports the same total three ways',
+     near(m.depthPlus2, m.depthPlus5) && near(m.depthPlus5, m.askDepth), `${m.depthPlus2}`);
+  ok('but the two fixed thresholds are now marked floors',
+     m.lowerBound.depthPlus2 && m.lowerBound.depthPlus5
+     && m.lowerBound.depthMinus2 && m.lowerBound.depthMinus5,
+     JSON.stringify(m.lowerBound));
+  // ...and the range-scoped ones are NOT, because ±0.05% is what was asked for
+  // and the book does reach it. Marking those too would put a caveat on the one
+  // figure on screen that is exact.
+  ok('while the figure scoped to the range it reaches stays a measurement',
+     !m.lowerBound.totalDepth && !m.lowerBound.bidDepth && !m.lowerBound.askDepth,
+     JSON.stringify(m.lowerBound));
+  const rows = panelRows(m, { exchangeName: 'X', market: 'spot', display: 'A/B', vol24h: 1, tsRecv: 1, tsVenue: 1 });
+  const val = (k) => rows.find((r) => r[3] === k)?.[1];
+  ok('and the panel prints it as one', String(val('depthPlus2')).startsWith('≥'), val('depthPlus2'));
+
+  // The other direction matters more: a floor marked on a figure the book DOES
+  // support is a caveat that becomes wallpaper.
+  const deepEnough = computeMetrics(book, 2);  // reaches ±5%
+  ok('a figure the book reaches is not marked',
+     !deepEnough.lowerBound.depthPlus5 && !deepEnough.lowerBound.depthMinus5,
+     JSON.stringify(deepEnough.lowerBound));
+  ok('and it prints as a plain number', !String(
+     panelRows(deepEnough, { exchangeName: 'X', market: 'spot', display: 'A/B', vol24h: 1, tsRecv: 1, tsVenue: 1 })
+       .find((r) => r[3] === 'depthPlus5')[1]).startsWith('≥'));
+  // The exact boundary, which is where real books put their size: `book`'s
+  // deepest level sits at exactly ±5%, i.e. 5.000000000000004 in floating point.
+  ok('a level exactly on the threshold counts as reaching it',
+     deepEnough.lowerBound.depthPlus5 === false && deepEnough.lowerBound.depthMinus5 === false,
+     `reach ${deepEnough.ask.reach}`);
+}
+
+// 24h volume is refreshed behind a swallowed failure, so the only thing that
+// can say it has stopped moving is its age.
+{
+  const now = 1_000_000_000;
+  ok('a fresh volume prints plainly', fmtVol(1.5e6, now - 1000, now) === '$1.50M');
+  ok('a stale one says so', fmtVol(1.5e6, now - VOL_STALE_MS - 1, now) === '$1.50M · stale');
+  ok('and a missing one is n/a, never stale', fmtVol(null, null, now) === 'n/a');
+  ok('a volume with no stamp is not accused of being stale',
+     fmtVol(1.5e6, null, now) === '$1.50M');
+}
+
+// The size-weighted touch. A resting book is not symmetric around (bid+ask)/2,
+// and the direction matters: weight on the BID pushes the microprice toward the
+// ask, because that is the side the next trade is likelier to take.
+{
+  const sym = computeMetrics({ bids: [[99.9, 5]], asks: [[100.1, 5]] }, 2);
+  ok('an evenly weighted touch puts the microprice on the mid',
+     near(sym.microprice, sym.mid) && sym.micropricePct === 0, `${sym.microprice}`);
+
+  const heavyBid = computeMetrics({ bids: [[99.9, 100]], asks: [[100.1, 1]] }, 2);
+  ok('a heavy bid pushes it toward the ask, not toward the bid',
+     heavyBid.microprice > heavyBid.mid && heavyBid.micropricePct > 0,
+     `${heavyBid.microprice} vs mid ${heavyBid.mid}`);
+  ok('and it stays inside the touch, never outside it',
+     heavyBid.microprice > heavyBid.bestBid && heavyBid.microprice < heavyBid.bestAsk,
+     `${heavyBid.microprice}`);
+
+  const heavyAsk = computeMetrics({ bids: [[99.9, 1]], asks: [[100.1, 100]] }, 2);
+  ok('a heavy ask is the mirror image', near(heavyAsk.micropricePct, -heavyBid.micropricePct),
+     `${heavyAsk.micropricePct} vs ${-heavyBid.micropricePct}`);
+
+  ok('the touch sizes travel with it', heavyBid.bidSize === 100 && heavyBid.askSize === 1);
+
+  // The bands stay anchored on the arithmetic mid on purpose: moving them would
+  // silently redefine every depth figure this repo has ever recorded. What the
+  // reader gets instead is how much that choice costs on this book.
+  // Pinned on a level that lands BETWEEN the two possible anchors, which is the
+  // only place the choice is observable: mid is 100 and the microprice 100.098,
+  // so an ask at 102.05 is +2.05% from the mid (outside ±2%) and +1.95% from the
+  // microprice (inside it). Counting it would mean the anchor had moved.
+  const straddle = computeMetrics({ bids: [[99.9, 100]], asks: [[100.1, 1], [102.05, 7]] }, 5);
+  ok('the ±2% band is measured from the mid, not the microprice',
+     near(straddle.depthPlus2, 100.1 * 1), `${straddle.depthPlus2}`);
+  ok('and that level is still counted at ±5%, so it was excluded and not lost',
+     near(straddle.depthPlus5, 100.1 * 1 + 102.05 * 7), `${straddle.depthPlus5}`);
+  const rows = panelRows(heavyBid, { exchangeName: 'X', market: 'spot', display: 'A/B', vol24h: 1, tsRecv: 1, tsVenue: 1 });
+  ok('the panel states it as an offset from mid, in bps',
+     /vs mid/.test(rows.find((r) => r[3] === 'microprice')[1]),
+     rows.find((r) => r[3] === 'microprice')[1]);
 }
 
 console.log(`\n${pass} passed, ${fail} failed`);

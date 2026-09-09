@@ -33,7 +33,7 @@ export class Ring {
   get length() { return this.buf.length; }
 }
 
-const COUNTERS = ['books', 'reconnects', 'errors', 'droppedFrames'];
+const COUNTERS = ['books', 'reconnects', 'errors', 'droppedFrames', 'rejectedBooks'];
 
 /**
  * What happened across a window of samples.
@@ -121,6 +121,15 @@ export function renderPrometheus(rows, extra = {}) {
     out += `depthviz_process_heap_used_bytes ${extra.memory.heapUsed}\n`;
   }
 
+  // Per exchange host, not per feed: eight venues serve thirteen feeds and the
+  // limit is on the host, so a series per feed would count the same queue twice.
+  if (extra.upstream?.length) {
+    help('depthviz_upstream_inflight', 'gauge', 'REST calls in flight to this exchange host.');
+    for (const u of extra.upstream) out += line('depthviz_upstream_inflight', { host: u.host }, u.inflight);
+    help('depthviz_upstream_queued', 'gauge', 'REST calls waiting for a slot on this exchange host. A queue that does not drain is a venue gone slow.');
+    for (const u of extra.upstream) out += line('depthviz_upstream_queued', { host: u.host }, u.queued);
+  }
+
   const metrics = [
     ['depthviz_feed_book_age_ms', 'gauge', 'ageMs',
      'Milliseconds since the last book arrived. The measurement that cannot lie: state reads live between drops.'],
@@ -130,6 +139,12 @@ export function renderPrometheus(rows, extra = {}) {
     ['depthviz_feed_reconnects_total', 'counter', 'reconnects', 'Reconnections since this feed opened.'],
     ['depthviz_feed_errors_total', 'counter', 'errors', 'Error statuses since this feed opened.'],
     ['depthviz_feed_dropped_frames_total', 'counter', 'droppedFrames', 'Frames skipped for clients that were behind.'],
+    ['depthviz_feed_rejected_books_total', 'counter', 'rejectedTotal',
+     'Books an adapter published and the hub refused: one-sided, non-positive mid, or CROSSED. A rising crossed count is a mis-sequenced stream.'],
+    ['depthviz_feed_vol_age_ms', 'gauge', 'volAgeMs',
+     'Milliseconds since 24h volume was last read successfully. Refreshes are swallowed on failure, so this is the only thing that says the figure has stopped moving.'],
+    ['depthviz_feed_drift_age_ms', 'gauge', 'driftAgeMs',
+     'Milliseconds since the ws-vs-REST integrity measurement was last taken. Absent on venues that do not make one.'],
     ['depthviz_feed_clients', 'gauge', 'clients', 'Viewers attached to this feed.'],
     ['depthviz_feed_up_ms', 'gauge', 'upMs', 'Milliseconds since this feed opened.'],
     ['depthviz_feed_levels', 'gauge', 'levelsTotal', 'Levels in the last book, both sides, before reduction.'],
@@ -140,8 +155,24 @@ export function renderPrometheus(rows, extra = {}) {
       const [exchange, market, symbol] = String(r.key).split(':');
       const v = field === 'levelsTotal'
         ? (r.levels ? r.levels[0] + r.levels[1] : null)
-        : r[field];
+        : field === 'rejectedTotal'
+          ? (r.rejected ? r.rejected.empty + r.rejected.crossed + r.rejected.badMid : null)
+          : r[field];
       out += line(name, { exchange, market, symbol, source: r.source, state: r.state }, v);
+    }
+  }
+
+  // Broken out from the total above because the three refusals are not the same
+  // news: `empty` and `badMid` are a feed that has nothing to say yet, while
+  // `crossed` is a stream that IS saying something and it is wrong. Alert on
+  // the second one.
+  help('depthviz_feed_rejected_books_by_reason_total', 'counter',
+       'Refused books by reason: empty (one-sided), badMid, crossed (best bid >= best ask).');
+  for (const r of rows) {
+    const [exchange, market, symbol] = String(r.key).split(':');
+    for (const reason of ['empty', 'badMid', 'crossed']) {
+      out += line('depthviz_feed_rejected_books_by_reason_total',
+                  { exchange, market, symbol, reason }, r.rejected?.[reason] ?? null);
     }
   }
 

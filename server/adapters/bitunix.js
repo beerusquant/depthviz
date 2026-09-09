@@ -91,6 +91,7 @@ export default {
     // cumulative-size disagreement over ±0.5% of mid; the panel and /api/depth
     // carry it, so a stream that starts lying stops being invisible.
     let drift = null;
+    let driftTs = null;      // and when that measurement was actually taken
     let stopped = false;
     let lastBook = null;
     // Held so close() can clear it: a flag alone stops the NEXT measurement and
@@ -121,7 +122,11 @@ export default {
           const mr = (rb[0][0] + ra[0][0]) / 2;
           const ws = cumTo(b.bids, mw, -1, 0.5) + cumTo(b.asks, mw, 1, 0.5);
           const rest = cumTo(rb, mr, -1, 0.5) + cumTo(ra, mr, 1, 0.5);
-          drift = rest > 0 ? Math.abs(ws - rest) / rest : null;
+          // Only a real reading moves the pair: the catch below keeps the
+          // previous value so a failed REST read cannot disturb the stream, and
+          // the stamp is what stops a stale measurement from passing as fresh.
+          const d = rest > 0 ? Math.abs(ws - rest) / rest : null;
+          if (d !== null) { drift = d; driftTs = Date.now(); }
         }
       } catch { /* the ws book is unaffected by a failed REST read */ }
       if (!stopped) measureTimer = setTimeout(measure, 5000);
@@ -136,7 +141,7 @@ export default {
       const bids = b.map((r) => [+r[0], +r[1]]);
       const asks = a.map((r) => [+r[0], +r[1]]);
       if (bids.length && asks.length) lastBook = { bids, asks };
-      emit({ bids, asks, ts, source: 'ws', drift });
+      emit({ bids, asks, ts, source: 'ws', drift, driftTs });
     }, PUBLISH_MS);
     // The one seam here: tests drive this adapter through a fake transport
     // instead of a socket. The hub only ever builds `opts` as { range }, so

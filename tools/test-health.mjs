@@ -144,5 +144,60 @@ console.log('\nrenderPrometheus — readable by something that never sleeps');
      renderPrometheus([]).includes('depthviz_feeds 0'));
 }
 
+// A refused book is not a book that never came. The hub drops one-sided,
+// non-positive-mid and CROSSED books, and the third is the one that means the
+// stream is wrong rather than quiet — so it gets its own series to alert on.
+{
+  const rows = [{
+    key: 'binance:spot:BTCUSDT', state: 'live', source: 'ws', ageMs: 40,
+    rejected: { empty: 2, badMid: 0, crossed: 7 }, volAgeMs: 900_000, driftAgeMs: 5_000,
+  }];
+  const out = renderPrometheus(rows);
+  ok('the refusals are exposed as one total',
+     /depthviz_feed_rejected_books_total\{[^}]*\} 9\n/.test(out), out);
+  ok('and broken out by reason, so a crossed stream is alertable on its own',
+     /by_reason_total\{[^}]*reason="crossed"\} 7\n/.test(out)
+     && /by_reason_total\{[^}]*reason="empty"\} 2\n/.test(out), out);
+  ok('a stale 24h volume is visible to a scraper, not only on screen',
+     /depthviz_feed_vol_age_ms\{[^}]*\} 900000\n/.test(out), out);
+  ok('and so is the age of the integrity measurement',
+     /depthviz_feed_drift_age_ms\{[^}]*\} 5000\n/.test(out), out);
+
+  // A venue that makes no drift measurement must emit nothing rather than a
+  // zero: a zero here reads as "measured just now, and it agreed".
+  const quiet = renderPrometheus([{ key: 'coinbase:spot:BTC-USD', state: 'live', ageMs: 5,
+                                    rejected: { empty: 0, badMid: 0, crossed: 0 },
+                                    volAgeMs: null, driftAgeMs: null }]);
+  ok('a venue with no such measurement emits no series for it, never a zero',
+     !/depthviz_feed_drift_age_ms\{/.test(quiet) && !/depthviz_feed_vol_age_ms\{/.test(quiet), quiet);
+  ok('but its refusals are still counted at zero, which is a fact',
+     /by_reason_total\{[^}]*reason="crossed"\} 0\n/.test(quiet), quiet);
+}
+
+// The gate that bounds the burst of REST snapshots a feed opening makes is per
+// HOST — eight venues serve thirteen feeds — so it is exposed per host, and a
+// process with nothing in flight emits nothing rather than a row of zeros.
+{
+  const busy = renderPrometheus([], { upstream: [{ host: 'api.binance.com', inflight: 4, queued: 9 }] });
+  ok('a saturated exchange host is visible to a scraper',
+     /depthviz_upstream_inflight\{host="api\.binance\.com"\} 4\n/.test(busy)
+     && /depthviz_upstream_queued\{host="api\.binance\.com"\} 9\n/.test(busy), busy);
+  ok('and an idle process says nothing about upstream at all',
+     !/depthviz_upstream/.test(renderPrometheus([], {})));
+}
+
+// The window summary has to carry refusals too: a feed refusing four books an
+// hour and one refusing none are the same in a single reading.
+{
+  const rows = [
+    { t: 0, books: 0, reconnects: 0, errors: 0, droppedFrames: 0, rejectedBooks: 0, ageMs: 10 },
+    { t: 1800_000, books: 5, reconnects: 0, errors: 0, droppedFrames: 0, rejectedBooks: 2, ageMs: 10 },
+    { t: 3600_000, books: 9, reconnects: 0, errors: 0, droppedFrames: 0, rejectedBooks: 6, ageMs: 10 },
+  ];
+  const w = summarize(rows);
+  ok('refusals are summed over the window like every other counter', w.rejectedBooks === 6, `${w.rejectedBooks}`);
+  ok('and reported as a rate an alert can use', near(w.rejectedBooksPerHour, 6), `${w.rejectedBooksPerHour}`);
+}
+
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);
