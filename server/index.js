@@ -6,9 +6,10 @@ import { fileURLToPath } from 'node:url';
 import { adapters, catalog } from './adapters/index.js';
 import { subscribe, stats, snapshot, closeAll, clipRaw, feedCount } from './hub.js';
 import { computeMetrics } from '../shared/metrics.js';
+import { aggregate } from './aggregate.js';
 import { renderPrometheus } from './health.js';
 import { Counter } from './quota.js';
-import { tokenBucket } from './util.js';
+import { tokenBucket, upstreamStats } from './util.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PORT = process.env.PORT || 8787;
@@ -59,6 +60,13 @@ const limit = (bucket) => (req, res, next) => {
 setInterval(() => { depthBucket.sweep(); listBucket.sweep(); }, 60_000).unref();
 
 const app = express();
+const server = http.createServer(app);
+// Built here, above the routes, because `/metrics` reports how many viewers are
+// connected. It used to be constructed at the bottom of this file and read from
+// a handler defined above it — safe only because no request can arrive before
+// listen(), which is a temporal dead zone waiting for someone to move a line.
+const wss = new WebSocketServer({ server, path: '/ws' });
+
 app.disable('x-powered-by');
 app.use(express.static(path.join(__dirname, '..', 'public')));
 // The metrics module is shared, not duplicated: the browser imports the same
@@ -94,6 +102,12 @@ app.get('/metrics', (_req, res) => {
     clients: wss.clients.size,
     uptimeMs: Date.now() - STARTED,
     memory: process.memoryUsage(),
+    // What this process currently owes each exchange. Opening twelve feeds at
+    // once produces a burst of REST snapshots that the per-client feed quota
+    // does not bound; the per-host gate that does is worth watching, because a
+    // host sitting at its cap with a queue behind it is the shape of a venue
+    // gone slow — and that is invisible in every other number here.
+    upstream: upstreamStats(),
   }));
 });
 
@@ -169,9 +183,21 @@ app.get('/api/depth', limit(depthBucket), async (req, res) => {
       ageMs: now - book.tsRecv,
       venueLatencyMs: book.tsVenue != null ? book.tsRecv - book.tsVenue : null,
       levels: book.levels,
-      accumulating: book.accum ? { since: book.accum.since } : null,
+      // Depth that was reconstructed from a capped snapshot rather than read,
+      // with the two things that qualify it: how long it has been accumulating,
+      // and what fraction of it nobody has confirmed inside `cutoffMs`. The
+      // window and the band travel with the fraction — a caveat quoted without
+      // its protocol is as unusable as a depth quoted without its band.
+      accumulating: book.accum || null,
+      // An integrity measurement with the instant it was taken. OKX and Bitunix
+      // swallow a failed REST read to protect the stream, so the previous value
+      // stands — and without its age, a stale disagreement reads as a fresh
+      // one. Same rule as the two clocks above: never a figure without its
+      // instant.
       drift: book.drift,
+      driftAgeMs: book.driftTs != null ? now - book.driftTs : null,
       vol24h: book.vol24h ?? null,
+      vol24hAgeMs: book.volTs != null ? now - book.volTs : null,
       mid: m.mid, bestBid: m.bestBid, bestAsk: m.bestAsk,
       spread: m.spread, spreadPct: m.spreadPct,
       bidVwap: m.bidVwap, bidVwapPct: m.bidVwapPct,
@@ -182,9 +208,21 @@ app.get('/api/depth', limit(depthBucket), async (req, res) => {
       // Resting-depth imbalance over ±range. Named for what it measures: it is
       // not order-flow imbalance, which is built from changes in the book.
       imbalance: m.imbalance, imbalanceLabel: m.imbalanceLabel,
+      // Which of the depth figures above are FLOORS rather than measurements,
+      // because the book ends before the distance they are quoted at. Bitunix
+      // caps its spot book at ~±0.05% of mid, so `depthMinus2`, `depthMinus5`
+      // and `bidDepth` there are one and the same number — the whole book —
+      // and nothing said so. Keyed by the field it qualifies, so a caller reads
+      // `lowerBound.depthPlus5` next to `depthPlus5` rather than deriving it.
+      //
+      // Distinct from `accumulating`, which marks depth that is a floor because
+      // it was rebuilt from a capped snapshot rather than because the book
+      // stops.
+      lowerBound: m.lowerBound,
       // The book stopping inside the requested range is a property of the
       // venue, not an error, but a caller integrating this must be able to see
-      // it without reading the chart.
+      // it without reading the chart. `bid`/`ask` are the real reach of each
+      // side, whatever the range asked for.
       reach: { bid: m.bid.reach, ask: m.ask.reach, shortBid: m.shortBid, shortAsk: m.shortAsk },
       ...(want === 'none' ? {} : {
         book: {
@@ -205,6 +243,121 @@ app.get('/api/depth', limit(depthBucket), async (req, res) => {
   }
 });
 
+/**
+ * The same instrument across several venues, measured on ONE band of prices.
+ *
+ *   curl '.../api/depth/aggregate?market=perp&base=BTC&range=2'
+ *   curl '.../api/depth/aggregate?venues=binance:BTCUSDT,okx:BTC-USDT-SWAP&market=perp'
+ *
+ * This is the question the tool could not be asked: it showed one venue at a
+ * time, and the number a market maker actually wants — where the liquidity is,
+ * across everywhere, right now — had to be assembled by hand from eight screens.
+ * Assembled by hand it is wrong in four ways that all look right, which is why
+ * the arithmetic lives in server/aggregate.js with its reasons written down.
+ *
+ * Symbols: give them explicitly with `venues=exchange:symbol,...` and nothing is
+ * guessed. Or give `base` (and optionally `quote`) and each venue's own listing
+ * is searched — the symbol chosen is REPORTED per venue, so the resolution is
+ * visible rather than silent. A venue with no match is named in `missing`.
+ */
+const AGG_MAX_VENUES = +process.env.DEPTHVIZ_AGGREGATE_MAX || 8;
+// Which quote to prefer when the caller names only a base. Not a claim that
+// these are interchangeable — `mixedQuotes` in the response says when they were
+// mixed — only an order to resolve ties in.
+const QUOTE_PREF = ['USDT', 'USD', 'USDC', 'USDE'];
+
+/** Pick this venue's symbol for `base`, or say why there is none. */
+async function resolveSymbol(ad, market, base, quote) {
+  const rows = await ad.listSymbols(market);
+  const b = base.toUpperCase();
+  const hits = rows.filter((r) => (r.base || '').toUpperCase() === b
+    && (!quote || (r.quote || '').toUpperCase() === quote.toUpperCase()));
+  if (!hits.length) return null;
+  hits.sort((x, y) => {
+    const rank = (r) => {
+      const i = QUOTE_PREF.indexOf((r.quote || '').toUpperCase());
+      return i < 0 ? QUOTE_PREF.length : i;
+    };
+    return rank(x) - rank(y) || x.s.localeCompare(y.s);
+  });
+  return hits[0];
+}
+
+app.get('/api/depth/aggregate', limit(depthBucket), async (req, res) => {
+  const range = Math.min(50, Math.max(0.01, +req.query.range || 2));
+  const market = req.query.market || 'spot';
+  const owner = ownerOf(req);
+
+  // Either form, never both halves of a guess: an explicit list is taken as
+  // given, a base is resolved and the resolution is reported.
+  let wanted;
+  if (req.query.venues) {
+    wanted = String(req.query.venues).split(',').map((pair) => {
+      const i = pair.indexOf(':');
+      return i < 0 ? { exchange: pair.trim(), symbol: null } : { exchange: pair.slice(0, i).trim(), symbol: pair.slice(i + 1).trim() };
+    }).filter((v) => v.exchange);
+    if (wanted.some((v) => !v.symbol)) {
+      return res.status(400).json({ error: 'venues must be exchange:symbol pairs, e.g. venues=binance:BTCUSDT,okx:BTC-USDT-SWAP' });
+    }
+  } else if (req.query.base) {
+    wanted = Object.values(adapters)
+      .filter((a) => a.markets.includes(market))
+      .map((a) => ({ exchange: a.id, symbol: null }));
+  } else {
+    return res.status(400).json({ error: 'give either base=BTC or venues=exchange:symbol,...' });
+  }
+
+  if (wanted.length > AGG_MAX_VENUES) {
+    return res.status(400).json({ error: `at most ${AGG_MAX_VENUES} venues per request; asked for ${wanted.length}` });
+  }
+
+  const missing = [];
+  const readings = [];
+  // In parallel on purpose — the whole point is one instant, and doing these in
+  // series would spread the legs of the sum over as many round trips as there
+  // are venues. The per-host upstream gate is what keeps that from becoming a
+  // burst at any single exchange.
+  await Promise.all(wanted.map(async (w) => {
+    const ad = adapters[w.exchange];
+    if (!ad) { missing.push({ exchange: w.exchange, reason: 'unknown exchange' }); return; }
+    if (!ad.markets.includes(market)) { missing.push({ exchange: w.exchange, reason: `no ${market} market` }); return; }
+    let symbol = w.symbol;
+    let quote = null;
+    try {
+      if (!symbol) {
+        const hit = await resolveSymbol(ad, market, req.query.base, req.query.quote);
+        if (!hit) { missing.push({ exchange: w.exchange, reason: `no ${market} listing for ${req.query.base}${req.query.quote ? '/' + req.query.quote : ''}` }); return; }
+        symbol = hit.s;
+        quote = hit.quote ?? null;
+      }
+      const book = await snapshot({ exchange: w.exchange, market, symbol, range, owner });
+      // Metrics off the RAW book: the figures here are summed across venues and
+      // compared between them, and the shipped curve interpolates between its
+      // bucket edges. The one place that difference matters is exactly this one.
+      const m = computeMetrics({ bids: book.raw.bids, asks: book.raw.asks }, range);
+      if (!m) { missing.push({ exchange: w.exchange, symbol, reason: 'no usable top of book' }); return; }
+      readings.push({
+        exchange: w.exchange, market, symbol, quote,
+        bids: book.raw.bids, asks: book.raw.asks,
+        mid: m.mid, tsVenue: book.tsVenue, tsRecv: book.tsRecv,
+        reach: { bid: m.bid.reach, ask: m.ask.reach },
+        // A venue still rebuilding its depth from a capped snapshot contributes
+        // a floor, and a young feed otherwise reads as a shallow venue.
+        accum: book.raw.accum || null,
+      });
+    } catch (e) {
+      // Named, with the reason, and never dropped: a sum with a leg silently
+      // absent is indistinguishable from a complete one.
+      missing.push({ exchange: w.exchange, symbol, reason: e.message });
+    }
+  }));
+
+  if (!readings.length) {
+    return res.status(504).json({ error: 'no venue produced a book', market, range, missing });
+  }
+  res.json({ market, base: req.query.base ?? null, ...aggregate(readings, missing, range) });
+});
+
 // One venue answering with malformed JSON at three in the morning must not take
 // the other twelve feeds down with it. Node's default is to kill the process on
 // an unhandled rejection, and under systemd that becomes a restart loop in which
@@ -214,9 +367,6 @@ app.get('/api/depth', limit(depthBucket), async (req, res) => {
 process.on('unhandledRejection', (err) => {
   console.error(`[unhandled] ${err?.stack || err}`);
 });
-
-const server = http.createServer(app);
-const wss = new WebSocketServer({ server, path: '/ws' });
 
 // A socket is not a feed: a client can hold one subscription and open two
 // hundred connections, and each of those is memory and event-loop cost before

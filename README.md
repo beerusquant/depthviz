@@ -127,13 +127,47 @@ gets. The reduction is exact in cumulative notional, quantity and VWAP at ±2%,
 BTC walk to"* is answerable only from the raw book. Which one the figures came
 from is stated in `metricsFrom` rather than left to be worked out.
 
+### Across venues
+
+One venue at a time is not the question a market maker asks. `/api/depth/aggregate`
+answers "where is the liquidity, everywhere, right now" — and the four ways
+that sum goes wrong by hand are each reported rather than hidden. Every venue
+has its own mid, so *±2% of mid* is a different band of prices on each: one
+reference mid is taken (the **median**, so a dislocated venue cannot drag it)
+and every venue is measured on the same **absolute** band around it. The books
+are not simultaneous, so `asOf.spanMs` says how far apart they were read — a
+total whose legs span two seconds is a mosaic, not a snapshot. A venue that
+failed is named in `missing` with its reason and `complete` goes false, because
+a sum with a leg silently absent looks exactly like a whole one. And a venue
+contributes a **floor** when its book ends inside the band *or* when it is still
+rebuilding depth from a capped snapshot — measured live, a Binance feed two
+seconds old showed $75M against MEXC's $721M on the same band, which is the age
+of the feed and not the liquidity of the venue. `lowerBound.reasons` says which.
+
+Symbols are either given explicitly (`venues=binance:BTCUSDT,okx:BTC-USDT-SWAP`)
+or resolved from `base` against each venue's own listing — and the symbol chosen
+is reported per venue, so the resolution is visible rather than silent.
+`mixedQuotes` is set when USDT and USD ended up in the same sum: close is not
+equal, and it is stated rather than corrected.
+
+A depth figure is only a measurement if the book reaches the distance it is
+quoted at, and it does not always: Bitunix caps its spot book at 50 levels,
+about ±0.05% of mid, where `-2% Depth`, `-5% Depth` and `Total Depth` are one
+and the same number. `lowerBound` says which of them are floors, keyed by the
+field it qualifies, and the panel prints those with a `≥`. Two other figures
+carry their own age for the same reason: `vol24hAgeMs`, because a failed volume
+refresh is swallowed to protect the feed and the previous value stands, and
+`driftAgeMs`, because the ws-vs-REST integrity check on OKX and Bitunix does the
+same. A number without its instant is not a measurement.
+
 | route | |
 |---|---|
 | `GET /api/depth?exchange&market&symbol&range[&levels=raw\|trimmed]` | one depth reading as JSON (above) |
+| `GET /api/depth/aggregate?market&base[&quote]&range` | the same instrument across every venue that lists it, summed on ONE band of prices |
 | `GET /api/symbols?exchange&market` | the venue's live instrument list |
 | `GET /api/catalog` | venues, markets and transports |
-| `GET /api/feeds[?history=1]` | per-feed health: book age, venue latency, reconnects, errors, dropped frames, and the last hour of samples behind them |
-| `GET /metrics` | the same facts as a Prometheus exposition, for something that never sleeps |
+| `GET /api/feeds[?history=1]` | per-feed health: book age, venue latency, reconnects, errors, dropped frames, refused books, and the last hour of samples behind them |
+| `GET /metrics` | the same facts as a Prometheus exposition, plus what each exchange host currently owes us |
 | `WS /ws` | the streaming book the page itself uses |
 
 On SIGTERM the process closes every upstream socket before exiting: systemd
@@ -148,7 +182,12 @@ ceilings bound what one visitor can cost: 48 live feeds for the whole process
 (`DEPTHVIZ_MAX_FEEDS`), **12 per client** (`DEPTHVIZ_MAX_FEEDS_PER_CLIENT`, so
 one caller cannot take every slot and refuse everybody else), 24 websocket
 connections per address (`DEPTHVIZ_MAX_SOCKETS_PER_IP`), and a token bucket on
-the two routes that reach an exchange. A refusal is a `429` with a real
+the two routes that reach an exchange. Those bound how many feeds exist, not how
+fast opening them hits a venue: every adapter's REST call also passes a per-host
+gate (`DEPTHVIZ_UPSTREAM_INFLIGHT`, four at a time), because twelve feeds
+opening at once was enough for Binance itself to answer 429 on the snapshots.
+Its queue is bounded and says so — an unbounded one is worse than the 429 it
+avoids. A refusal is a `429` with a real
 `Retry-After`, never a `504` — this server saying no is not the venue being
 unwell. Behind a reverse proxy set `DEPTHVIZ_TRUST_PROXY=1`, or every caller
 shares one budget.
@@ -161,9 +200,15 @@ server/hub.js       fan-out, payload reduction, feed lifecycle and health
 server/util.js      reconnecting sockets, publish coalescing, the book side, the protobuf reader
 server/quota.js     what one client may hold — kept out of the thing that opens sockets, so it is testable
 server/health.js    the sample ring behind /api/feeds and the Prometheus exposition
+server/aggregate.js the cross-venue sum — pure, so the four ways it goes wrong are testable
 server/adapters/    one file per venue + diff-book.js, the engine five feeds share
+server/adapters/contract.js   what an adapter is, asserted at import rather than remembered
 shared/metrics.js   every number on screen and in /api/depth — one implementation
-public/             the page: ES modules and canvas, no build step
+public/state.js     what the page knows, and the one way anything asks to be redrawn
+public/feed.js      the websocket to this server, its reconnects, and nothing else
+public/menus.js     the two dropdowns and the ranking that makes the symbol one usable
+public/app.js       what is drawn, what the controls do, and the wiring
+public/chart.js     the canvas: curves, axes, crosshair, panel
 tools/              the proofs: unit tests, recorded venue fixtures, live verifiers, smoke tests
 tools/record.mjs    the tape: raw books to JSONL, so a threshold can be re-derived rather than believed
 docs/               the long-form documentation

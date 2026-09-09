@@ -34,6 +34,7 @@ const CHECKS = [
   ['stitch tests',    ['tools/test-stitch.mjs']],
   ['trim tests',      ['tools/test-trim.mjs']],
   ['metrics tests',   ['tools/test-metrics.mjs']],
+  ['aggregate tests', ['tools/test-aggregate.mjs']],
   ['limit tests',     ['tools/test-limits.mjs']],
   ['health tests',    ['tools/test-health.mjs']],
   ['recording tests', ['tools/test-recording.mjs']],

@@ -28,7 +28,7 @@
     "start": "node server/index.js",
     "dev": "node --watch server/index.js",
     "crosscheck": "node tools/crosscheck-ccxt.mjs",
-    "test": "node tools/test-book.mjs && node tools/test-diff-book.mjs && node tools/test-adapters.mjs && node tools/test-conformance.mjs && node tools/test-reconnect.mjs && node tools/test-stitch.mjs && node tools/test-trim.mjs && node tools/test-metrics.mjs && node tools/test-limits.mjs && node tools/test-health.mjs && node tools/test-recording.mjs",
+    "test": "node tools/test-book.mjs && node tools/test-diff-book.mjs && node tools/test-adapters.mjs && node tools/test-conformance.mjs && node tools/test-reconnect.mjs && node tools/test-stitch.mjs && node tools/test-trim.mjs && node tools/test-metrics.mjs && node tools/test-aggregate.mjs && node tools/test-limits.mjs && node tools/test-health.mjs && node tools/test-recording.mjs",
     "verify:bitunix": "node tools/verify-bitunix.mjs",
     "verify:hyperliquid": "node tools/verify-hyperliquid.mjs",
     "checks": "node tools/run-checks.mjs",

@@ -230,6 +230,17 @@ discover as a bug:
 The hub is the only place a book is touched between an adapter and a viewer, so
 the constraints on it are worth stating.
 
+**Three refusals, each counted.** `Feed.onBook` is the one gate every book
+passes, and it accepts none that is one-sided, has a non-positive mid, or
+CROSSES — best bid at or above best ask. That last one is the shape a
+mis-sequenced diff stream takes, and nothing here used to refuse it: the mid
+computes fine inside a negative spread, the spread renders as -2.00%, and both
+depth curves are drawn over prices they share. A refusal freezes the feed rather
+than advancing it with a wrong book, which is the intended trade — `ageMs` then
+grows where anyone looking can see it — and the counters say which of the three
+it was. `crossed` gets its own Prometheus series, because a feed with nothing to
+say and a feed saying something wrong are different news.
+
 **Two clocks, never conflated.** A book carries `tsVenue` — the exchange's own
 event time — and `tsRecv`, when the frame reached this process. `tsVenue` is
 `null` wherever the venue stamps nothing: a REST poll, Binance spot's snapshot. It used to be filled with `Date.now()` on those paths, which made

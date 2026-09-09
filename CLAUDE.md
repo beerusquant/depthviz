@@ -231,6 +231,95 @@ A snapshot and a diff frame captured minutes apart and renumbered onto each othe
 produce a book that CROSSES — which reads exactly like an adapter bug. Capture
 the pair the way the adapter takes it.
 
+## 2 sexies. A figure without its qualification is not a figure
+
+Three numbers in this repo were printed as facts and were not, and none of the
+three announced itself:
+
+- **A depth is a measurement only if the book reaches the distance it is quoted
+  at.** Bitunix caps its spot book at 50 levels, ~±0.05% of mid, so `-2% Depth`,
+  `-5% Depth` and `Total Depth` were the same number rendered as three separate
+  measurements — `shortBid`/`shortAsk` are judged against the SELECTED range,
+  and those two thresholds are fixed. `computeMetrics` now returns `lowerBound`,
+  keyed by the field it qualifies, and the panel prints a `≥`. The value is
+  kept, not nulled: a book reaching 1.9% is a useful floor for its ±2% depth.
+- **`reach` was the walk's own loop bound, not the book's.** The walk stops at
+  `max(range, 5)` for cost, and `reach` was read off it — so a book extending to
+  ±20% reported exactly 5.000 at any range under 5, in the field documented as
+  how far the book goes. It is O(1) now, off the last level, because a side is
+  sorted outward from mid. Measured on Binance spot: 5.000 before, 20.001 after.
+- **A swallowed failure leaves the previous value standing, and it looks
+  identical to a fresh one.** `vol24h` is refreshed behind a `catch {}` on
+  purpose — a ticker having a bad minute must not kill a healthy book — and so
+  is the ws-vs-REST `drift` on OKX and Bitunix. Both now carry the instant they
+  were last actually read (`vol24hAgeMs`, `driftAgeMs`), and the stamp moves
+  only on a success. Same rule as `tsVenue` in §1 bis: the honest answer to "we
+  do not know" is to say so, never to serve the last thing we knew as current.
+
+## 2 septies. A book that crosses is not a book
+
+Nothing in this process refused one. `bids[0][0] >= asks[0][0]` — the shape a
+mis-sequenced diff stream takes — computed a mid inside a negative spread, a
+spread of -2.00%, and two depth curves over prices they share. The chart stays
+beautiful, which is this repo's definition of the worst kind of bug, and the
+conformance suite already asserted the invariant on the way OUT of an adapter
+while nothing checked it on the way IN to the hub.
+
+`Feed.onBook` is the one gate every book passes, and it now refuses three
+things and COUNTS each: `empty` (one-sided), `badMid`, `crossed`. Refusing
+freezes the feed rather than advancing it with a wrong book, which is the
+intended trade — `ageMs` then grows where anyone can see it, and `rejected` says
+which of the three it was. `crossed` gets its own Prometheus series, because
+`empty` is a feed with nothing to say and `crossed` is a feed saying something
+wrong: different news, different fix.
+
+## 2 octies. A sum across venues is four lies in a trench coat
+
+Adding depth across exchanges by hand is wrong in four ways, and every one of
+them produces a total that looks right. `server/aggregate.js` exists so each is
+reported rather than hidden, and it is a pure module for the same reason
+`quota.js` is one — joining feeds opens sockets, so a rule kept with them can
+only be tested against the live internet.
+
+- **Every venue has its own mid**, so "±2% of mid" is a different band of prices
+  on each and their sum is the depth inside no range at all. One reference mid
+  is taken — the **median**, so a dislocated or stale venue cannot drag it — and
+  every venue is measured on the same ABSOLUTE band (`notionalWithin`).
+- **The books are not simultaneous.** They arrive on independent feeds, so a sum
+  is a mosaic of photographs. `asOf.spanMs` says how far apart they were read.
+  Measured live on BTC perp: 1.7–3.5 s, most of it from venues whose books
+  genuinely do not move often — which is the honest answer, not a defect.
+- **A leg that failed must not simply be absent**, because a sum missing one
+  looks exactly like a whole one. Failures are named in `missing` with a reason
+  and `complete` goes false.
+- **A floor in the sum makes the sum a floor**, and there are two ways to get
+  one: a book that ends inside the band, and a feed still rebuilding depth from
+  a capped snapshot. The second is the one that bites — measured on BTC perp,
+  Binance showed **$84M at 1 s old and $511M at 141 s**, on the same band, with
+  the venue unchanged. Without the flag that reads as a venue nobody trades on.
+  `lowerBound.reasons` says which of the two it was.
+
+Five deliberate breaks — median to mean, per-venue bands, `complete: true`,
+`spanMs: 0`, a floor not propagated — all five caught by `test-aggregate.mjs`.
+Do that before believing it.
+
+## 2 nonies. The microprice is exposed; the bands stay on the mid
+
+A resting book is not symmetric around `(bid+ask)/2`: when the bid carries ten
+times the ask's size, the next trade is far likelier to lift the ask, and the
+microprice — each side weighted by the OPPOSITE side's quantity — is where the
+touch actually is. This tool never showed it.
+
+It is reported, and the depth bands are **still anchored on the arithmetic
+mid**. Moving them would make every depth figure here incomparable with ccxt,
+with the venues' own reporting, and with this repo's own recorded measurements —
+a definition change dressed as an improvement. What a reader needs instead is
+how much that choice costs on the book in front of them, which is
+`micropricePct`: at 0.0001% it changes nothing, at 0.05% the ±2% band is shifted
+by a fortieth of its width and they should know. Pinned on a level that lands
+between the two possible anchors, which is the only place the choice is
+observable.
+
 ## 3. A check that cries wolf is worse than no check
 
 - **Neither a `SKIP` nor an `INCONC` counts as a pass.** Both are an absence of
@@ -366,11 +455,28 @@ network.
   measurement tool. What actually bounds the cost to an exchange is the feed
   quota — a feed is one connection however often it is asked for — so the bucket
   only has to stop a tight loop. 20 burst, 5/s.
-- **Still open, measured 2026-09-08:** twelve feeds opened at once from one
-  client is enough for **Binance itself to answer 429** on the snapshot calls
-  (weight 50 each). The per-client cap bounds concurrency; nothing yet paces the
-  burst of REST snapshots that opening them produces. A global upstream limiter
-  is the fix and has not been written.
+- **The burst nobody was pacing, measured 2026-09-08:** twelve feeds opened at
+  once from one client is enough for **Binance itself to answer 429** on the
+  snapshot calls (weight 50 each). The per-client cap bounds how many feeds
+  exist; it says nothing about the burst of REST snapshots that opening them
+  produces. Every adapter reaches a venue through `fetchJson`, so the bound
+  lives there and is written once instead of eight times: four calls in flight
+  per exchange HOST, a bounded queue, and a refusal that names the host rather
+  than an unbounded queue that silently degrades. Exposed as
+  `depthviz_upstream_{inflight,queued}`.
+
+  **Concurrency is a bound; spacing would be a threshold.** Four simultaneous
+  requests to one venue is defensible by construction. A minimum gap between
+  requests is not — it needs a distribution, and none has been sampled — so
+  `DEPTHVIZ_UPSTREAM_GAP_MS` exists, ships at `0`, and stays there until
+  somebody measures what the venues tolerate. Per §2 bis: not every measurement
+  earns a threshold, and saying so is the answer.
+
+  **Proven live 2026-09-09**, because a limiter checked only against a stub is a
+  limiter checked against itself: fourteen concurrent symbols at one server, all
+  Binance spot — **12 served, 2 refused with a 429 that says what to do, 0 from
+  Binance**, 1 730 ms wall for twelve feeds and twelve weight-50 snapshots. Redo
+  it with `tools/` or a dozen curls; the number that matters is the third one.
 
 - **A counter with no memory answers the wrong question.** `reconnects: 1284` is
   a total since the feed opened; whether anything is wrong now is a delta, and
@@ -399,6 +505,11 @@ A change that was not executed does not exist. Depending on what you touch:
 | an adapter's lifecycle — open, close, status handling, timers | `node tools/test-conformance.mjs`, and add the venue to its table |
 | `server/quota.js`, `tokenBucket`, a limit or a ceiling | `node tools/test-limits.mjs` **and** a live refusal: 14 concurrent symbols must yield 12 served and a 429 that says what to do |
 | `server/health.js`, `/api/feeds`, `/metrics` | `node tools/test-health.mjs` **and** a `curl` of both routes |
+| `server/aggregate.js`, `/api/depth/aggregate`, `notionalWithin` | `node tools/test-aggregate.mjs` **and** a `curl` of the route on a real basket — check `asOf.spanMs`, `complete` and `lowerBound.reasons`, not just the total |
+| `BookSide.staleFraction`, `accum` | `node tools/test-book.mjs` — and read the fraction on a warm Aster feed, where it is ~50% against Binance's 3% |
+| an adapter's shape, or `server/adapters/contract.js` | `node tools/test-conformance.mjs` — it asserts the contract AND that its own table still covers every `(exchange, market)` the registry serves |
+| `fetchJson`, `upstreamGate`, anything that reaches a venue over REST | `node tools/test-limits.mjs` — the cap, the bounded queue, a failed job releasing its slot |
+| anything at all | `npm run lint` — not a style gate, three rules that catch what `node --check` cannot |
 | a threshold, or the sample behind one | `npm run measure:drift -- --check`, and the sample written next to the number |
 | the recording format | `node tools/test-recording.mjs` **and** one real capture replayed end to end |
 | an adapter, a unit conversion | `node tools/test-adapters.mjs` (deterministic, replays recorded frames), **then** `npm run crosscheck` **and** `node tools/verify-conversions.mjs` |
@@ -410,6 +521,13 @@ A change that was not executed does not exist. Depending on what you touch:
 `smoke-feeds.mjs` prints a `clock=` column per venue: `venue+NNms` where the
 exchange stamps its frames, `none` where it does not. A venue that silently stops
 stamping shows up there.
+
+The front end is four modules and the graph is a tree — `app.js` depends on
+`state.js`, `feed.js`, `menus.js` and `chart.js`; those depend only on `state.js`.
+A cycle here is not a style problem: it is how a module ends up half-initialised
+at first use — the same class as the temporal dead zone that once silently
+killed every line of a page's script after one line, with the page still
+loading and streaming.
 
 `smoke-ui.mjs` ends with a mobile pass (390x844 and rotated) that asserts reach,
 not looks: no sideways scroll, every control on screen and tall enough for a
