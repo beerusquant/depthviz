@@ -7,59 +7,80 @@
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' fill='%2307080a'/%3E%3Crect x='2' y='6' width='5' height='8' fill='%2300e676'/%3E%3Crect x='9' y='3' width='5' height='11' fill='%23ff1744'/%3E%3C/svg%3E">
 <link rel="stylesheet" href="style.css">
 </head>
-<body>
-<header class="bar">
-  <div class="brand">DEPTHVIZ<span class="brand-sub">ORDER BOOK DEPTH</span></div>
+<body class="hub-body">
 
-  <div class="group">
-    <span class="lbl">MARKET</span>
-    <div class="seg" id="market">
-      <button class="seg-b active" data-market="spot">SPOT</button>
-      <button class="seg-b" data-market="perp">PERPS</button>
-    </div>
+<main class="hub">
+  <header class="hub-head">
+    <h1 class="hub-title">DEPTHVIZ</h1>
+    <p class="hub-sub">ORDER BOOK DEPTH</p>
+    <hr class="hub-rule">
+  </header>
+
+  <div class="hub-cards">
+
+    <a class="hub-card" href="single.html">
+      <!-- One book: a single curve in a frame. -->
+      <svg class="hub-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true">
+        <rect x="2.5" y="4.5" width="19" height="15" rx="2"/>
+        <path d="M5 15.5l3.5-4 3 2.5 3.5-5.5 3 4"/>
+      </svg>
+      <h2>SINGLE MODE</h2>
+      <p>One exchange, one ticker — the full depth curve with VWAP, spread, the
+         ±2%/±5% figures and every caveat that qualifies them.</p>
+      <span class="hub-enter">ENTER <span aria-hidden="true">&rarr;</span></span>
+    </a>
+
+    <a class="hub-card" href="combined.html">
+      <!-- Many books, one axis: stacked rows sharing a vertical guide. -->
+      <svg class="hub-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true">
+        <rect x="2.5" y="4" width="19" height="4.5" rx="1.2"/>
+        <rect x="2.5" y="9.75" width="19" height="4.5" rx="1.2"/>
+        <rect x="2.5" y="15.5" width="19" height="4.5" rx="1.2"/>
+        <path d="M12 2.5v19" stroke-dasharray="2 2"/>
+      </svg>
+      <h2>COMBINED MODE</h2>
+      <p>One ticker, every exchange that lists it — all the curves on one shared
+         price axis, so a dislocation between venues is a gap you can see.</p>
+      <span class="hub-enter">ENTER <span aria-hidden="true">&rarr;</span></span>
+    </a>
+
+    <a class="hub-card" href="compare.html">
+      <!-- Arbitrary books: two independent panes. -->
+      <svg class="hub-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true">
+        <rect x="2.5" y="4.5" width="8.5" height="15" rx="1.5"/>
+        <rect x="13" y="4.5" width="8.5" height="15" rx="1.5"/>
+        <path d="M5.5 15l2-3 2 2"/>
+        <path d="M16 15l2-4 2 3"/>
+      </svg>
+      <h2>COMPARE MODE</h2>
+      <p>Any books, side by side — different assets, different quotes, spot
+         against perp, across venues. Add as many as you want.</p>
+      <span class="hub-enter">ENTER <span aria-hidden="true">&rarr;</span></span>
+    </a>
+
   </div>
 
-  <div class="group">
-    <div class="picker" id="ex-picker">
-      <button class="btn pick" id="ex-btn"><span class="caret">&#9662;</span><span id="ex-label">BINANCE [SPOT]</span></button>
-      <div class="menu" id="ex-menu"></div>
-    </div>
-  </div>
-
-  <div class="group grow">
-    <div class="picker grow" id="sym-picker">
-      <input id="sym-input" class="sym-input" placeholder="Search symbol…" autocomplete="off" spellcheck="false">
-      <div class="menu sym-menu" id="sym-menu"></div>
-    </div>
-    <span class="pairs" id="pairs">—</span>
-  </div>
-
-  <div class="group" id="range-g">
-    <span class="lbl">RANGE</span>
-    <div class="seg" id="range">
-      <button class="seg-b" data-range="0.1">&pm;0.1%</button>
-      <button class="seg-b" data-range="0.5">&pm;0.5%</button>
-      <button class="seg-b active" data-range="2">&pm;2%</button>
-      <button class="seg-b" data-range="5">&pm;5%</button>
-      <button class="seg-b" data-range="10">&pm;10%</button>
-    </div>
-  </div>
-
-  <div class="group right">
-    <span class="live" id="live"><i class="dot"></i><b id="live-b">CONNECTING</b><span id="live-s"></span></span>
-    <button class="btn icon" id="theme" title="Toggle theme">&#9728;</button>
-    <button class="btn" id="copy">&#10697; COPY</button>
-    <button class="btn" id="png">&#8615; PNG</button>
-  </div>
-</header>
-
-<main id="stage">
-  <canvas id="chart"></canvas>
-  <div id="note" class="note hidden"></div>
+  <footer class="hub-foot">
+    <span id="hub-venues">—</span> · LIVE WEBSOCKET BOOKS · NO AUTHENTICATION, LOOPBACK BY DEFAULT
+  </footer>
 </main>
 
-<div id="toast" class="toast"></div>
-
-<script type="module" src="app.js"></script>
+<script type="module">
+// The venue count comes from the catalog rather than a number typed here: a
+// footer claiming eight exchanges after a ninth is added is the kind of stale
+// fact nobody thinks to check.
+import { applyStoredTheme } from './theme.js';
+applyStoredTheme();
+try {
+  const cat = await (await fetch('/api/catalog')).json();
+  const feeds = cat.reduce((n, c) => n + c.markets.length, 0);
+  document.getElementById('hub-venues').textContent =
+    `${cat.length} EXCHANGES · ${feeds} FEEDS`;
+} catch {
+  // The hub is reachable without the API being healthy; say nothing rather
+  // than print a count that is not true.
+  document.getElementById('hub-venues').textContent = 'EXCHANGE LIST UNAVAILABLE';
+}
+</script>
 </body>
 </html>

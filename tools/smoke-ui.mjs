@@ -3,12 +3,16 @@ import { chromium } from 'playwright';
 // listens on 8888, and a tool pointed at nothing reports a broken app rather
 // than a misconfigured tool.
 const BASE = process.env.DEPTHVIZ_HTTP || 'http://127.0.0.1:8787';
+// `/` is the mode chooser now; single mode lives at /single.html. A tool that
+// kept pointing at the root would have smoke-tested a page with no chart on it
+// and reported it as fine.
+const SINGLE = `${BASE}/single.html`;
 const b = await chromium.launch({ channel: 'chrome' });
 const p = await b.newPage({ viewport: { width: 1500, height: 900 }, deviceScaleFactor: 2 });
 const errs = [];
 p.on('console', m => { if (m.type() === 'error') errs.push('CONSOLE: ' + m.text()); });
 p.on('pageerror', e => errs.push('PAGEERROR: ' + e.message));
-await p.goto(`${BASE}/`, { waitUntil: 'networkidle' }).catch((e) => {
+await p.goto(SINGLE, { waitUntil: 'networkidle' }).catch((e) => {
   console.error(`could not load ${BASE} — is the server up? (${e.message.split('\n')[0]})`);
   process.exit(1);
 });
@@ -161,7 +165,7 @@ await p.screenshot({ path: 'tools/out/s_light.png' });
   const mp = await mob.newPage();
   mp.on('pageerror', (e) => errs.push('MOBILE PAGEERROR: ' + e.message));
   mp.on('console', (m) => { if (m.type() === 'error') errs.push('MOBILE CONSOLE: ' + m.text()); });
-  await mp.goto(`${BASE}/`, { waitUntil: 'networkidle' });
+  await mp.goto(SINGLE, { waitUntil: 'networkidle' });
   await mp.waitForTimeout(6000);
 
   const CONTROLS = ['#market', '#ex-btn', '#sym-input', '#range', '#theme', '#copy', '#png'];
@@ -235,6 +239,96 @@ await p.screenshot({ path: 'tools/out/s_light.png' });
   await mp.waitForTimeout(1500);
   await mp.screenshot({ path: 'tools/out/s_mobile.png' });
   await mob.close();
+}
+
+// ---------------------------------------------------------------- the modes
+// Three pages share the same modules now, and a mode nobody drives is a mode
+// that breaks silently: `/` stopped being the chart page, and a tool still
+// pointing at the root would have reported an empty hub as a healthy app.
+{
+  const mp = await b.newPage({ viewport: { width: 1440, height: 900 } });
+  mp.on('pageerror', (e) => errs.push(`MODES: ${e}`));
+  mp.on('console', (m) => { if (m.type() === 'error') errs.push(`MODES: ${m.text()}`); });
+
+  // --- the hub ---
+  await mp.goto(`${BASE}/`, { waitUntil: 'networkidle' });
+  const cards = await mp.$$eval('.hub-card', (els) => els.map((e) => ({
+    title: e.querySelector('h2')?.textContent, href: e.getAttribute('href'),
+  })));
+  console.log('hub               ', JSON.stringify(cards.map((c) => c.title)));
+  if (cards.length !== 3) errs.push(`HUB: ${cards.length} cards, expected 3`);
+  for (const c of cards) {
+    const r = await mp.request.get(`${BASE}/${c.href}`);
+    if (!r.ok()) errs.push(`HUB: ${c.title} links to ${c.href} which answers ${r.status()}`);
+  }
+  // The venue count is derived from /api/catalog rather than typed in: a footer
+  // claiming eight exchanges after a ninth is added is a stale fact on the
+  // first page anybody sees.
+  const foot = (await mp.textContent('#hub-venues')).trim();
+  console.log('  footer          ', foot);
+  if (!/\d+ EXCHANGES/.test(foot)) errs.push(`HUB: footer did not resolve the catalog: "${foot}"`);
+
+  // --- combined: one ticker, every venue, one shared price axis ---
+  await mp.goto(`${BASE}/combined.html`, { waitUntil: 'networkidle' });
+  await mp.waitForFunction(() => window.__depthvizProbe?.().venues.some((v) => v.live),
+    null, { timeout: 40000 }).catch(() => errs.push('COMBINED: no venue went live within 40s'));
+  await mp.waitForTimeout(3000);
+  const cb = await mp.evaluate(() => window.__depthvizProbe());
+  const liveVenues = cb.venues.filter((v) => v.live);
+  console.log('combined          ', `${liveVenues.length}/${cb.venues.length} live ·`,
+    JSON.stringify(liveVenues.map((v) => `${v.exchange}:${v.symbol}`)));
+  if (liveVenues.length < 2) errs.push(`COMBINED: only ${liveVenues.length} venue(s) live — the mode is a comparison`);
+  // Each venue lists this asset under its own symbol, and the resolution is
+  // shown rather than guessed: BTC is BTCUSDT here and BTC-USDT there.
+  if (new Set(cb.venues.map((v) => v.symbol)).size < 2) {
+    errs.push('COMBINED: every venue resolved to the same symbol string — resolution looks wrong');
+  }
+  const rowCount = await mp.$$eval('.vrow', (e) => e.length);
+  if (rowCount !== cb.venues.length) errs.push(`COMBINED: ${rowCount} rows for ${cb.venues.length} venues`);
+  console.log('  first row       ', (await mp.textContent('.vrow'))?.replace(/\s+/g, ' ').slice(0, 96));
+  await mp.click('#range .seg-b[data-range="5"]');
+  await mp.waitForTimeout(2500);
+  const wide = await mp.evaluate(() => window.__depthvizProbe());
+  if (wide.range !== 5) errs.push('COMBINED: the range control did not take');
+  console.log('  at ±5%          ', (await mp.textContent('.vrow'))?.replace(/\s+/g, ' ').slice(0, 96));
+
+  // --- compare: arbitrary books, stacked ---
+  await mp.goto(`${BASE}/compare.html`, { waitUntil: 'networkidle' });
+  await mp.waitForFunction(() => window.__depthvizProbe?.().panes.filter((p) => p.live).length >= 2,
+    null, { timeout: 40000 }).catch(() => errs.push('COMPARE: fewer than 2 books went live within 40s'));
+  await mp.waitForTimeout(1500);
+  const cp = await mp.evaluate(() => window.__depthvizProbe());
+  console.log('compare           ', JSON.stringify(cp.panes.map((p) => `${p.exchange}:${p.symbol}`)));
+  if (await mp.$$eval('.pane', (e) => e.length) !== cp.panes.length) errs.push('COMPARE: panes on screen do not match state');
+  // Every pane carries the same panel rows single mode shows, from the same
+  // shared implementation — a figure must not mean one thing in one mode and
+  // something else here.
+  const prows = await mp.$$eval('.pane:first-child .prow', (e) => e.length);
+  if (prows < 8) errs.push(`COMPARE: only ${prows} panel rows in a pane`);
+  const arb = await mp.textContent('#arb-text');
+  console.log('  arb line        ', arb.slice(0, 110));
+  // The line is a mid-to-mid difference and has to say so when the two books do
+  // not settle in the same currency, or when they were not read together.
+  if (!/COMPARABLE PAIR|nothing comparable|add a second/.test(arb)) {
+    errs.push(`COMPARE: the arbitrage line says something unexpected: "${arb}"`);
+  }
+  const before = cp.panes.length;
+  await mp.click('.pane:first-child .pane-x');
+  await mp.waitForTimeout(800);
+  const after = await mp.evaluate(() => window.__depthvizProbe().panes.length);
+  if (after !== before - 1) errs.push(`COMPARE: removing a book left ${after} panes, expected ${before - 1}`);
+  console.log('  remove a book   ', `${before} -> ${after}`);
+
+  // --- mobile, both new modes ---
+  await mp.setViewportSize({ width: 390, height: 844 });
+  for (const [name, url] of [['hub', '/'], ['combined', '/combined.html'], ['compare', '/compare.html']]) {
+    await mp.goto(`${BASE}${url}`, { waitUntil: 'networkidle' });
+    await mp.waitForTimeout(2500);
+    const over = await mp.evaluate(() => document.documentElement.scrollWidth - innerWidth);
+    console.log(`  mobile ${name.padEnd(9)}`, `sideways overflow ${over}px`);
+    if (over > 0) errs.push(`RESPONSIVE: ${name} scrolls sideways by ${over}px at 390px wide`);
+  }
+  await mp.close();
 }
 
 console.log(errs.length ? 'ERRORS:\n' + errs.join('\n') : 'no js errors');

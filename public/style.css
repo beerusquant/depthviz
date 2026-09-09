@@ -177,3 +177,124 @@ body {
 /* A finger has no hover state: the crosshair follows a drag on the canvas, so
    the browser must not steal the gesture for a scroll. */
 #chart { touch-action: none; }
+
+/* ============================================================ hub (index) ==
+   The mode chooser. Same tokens as the app it opens, so entering a mode is not
+   a change of product — only the two accent colours of a depth chart and the
+   same line weight. It scrolls, unlike the app pages, because it has nothing to
+   keep on screen at a fixed size. */
+.hub-body { overflow: auto; display: block; }
+.hub {
+  min-height: 100%;
+  display: flex; flex-direction: column; justify-content: center;
+  gap: 34px; padding: 48px 24px 32px; max-width: 1180px; margin: 0 auto;
+}
+.hub-head { text-align: center; }
+.hub-title {
+  margin: 0; font-size: clamp(28px, 6vw, 52px); font-weight: 700;
+  letter-spacing: .22em; color: var(--fg);
+}
+.hub-sub {
+  margin: 8px 0 0; color: var(--dim); letter-spacing: .34em; font-size: 11px;
+}
+.hub-rule { width: 72px; margin: 22px auto 0; border: 0; border-top: 1px solid var(--line); }
+
+.hub-cards { display: grid; gap: 18px; grid-template-columns: repeat(3, 1fr); }
+@media (max-width: 900px) { .hub-cards { grid-template-columns: 1fr; } }
+
+.hub-card {
+  display: flex; flex-direction: column; gap: 14px;
+  padding: 26px 24px 22px;
+  background: var(--panel); border: 1px solid var(--line); border-radius: 6px;
+  color: inherit; text-decoration: none;
+  transition: border-color .12s, transform .12s;
+}
+.hub-card:hover, .hub-card:focus-visible {
+  border-color: var(--accent);
+  transform: translateY(-2px);
+  outline: none;
+}
+.hub-icon { width: 30px; height: 30px; color: var(--accent); }
+.hub-card h2 {
+  margin: 0; font-size: 15px; letter-spacing: .16em; font-weight: 700; color: var(--accent);
+}
+.hub-card p { margin: 0; color: var(--dim); line-height: 1.65; flex: 1; }
+.hub-enter { color: var(--accent); letter-spacing: .16em; font-weight: 700; font-size: 11px; }
+.hub-card:hover .hub-enter { text-decoration: underline; }
+.hub-foot {
+  text-align: center; color: var(--dim); font-size: 10px; letter-spacing: .16em;
+}
+a.brand { color: inherit; text-decoration: none; }
+a.brand:hover { color: var(--accent); }
+
+/* ====================================================== combined mode ==== */
+.stage-combined { display: flex; flex-direction: column; min-height: 0; }
+.stage-combined > canvas { flex: 1; min-height: 0; width: 100%; }
+/* One line per venue under the chart: the numbers the curves cannot carry. */
+.vrows {
+  flex: 0 0 auto; max-height: 34%; overflow: auto;
+  border-top: 1px solid var(--line); background: var(--panel);
+}
+.vrow {
+  display: flex; align-items: center; gap: 10px;
+  padding: 5px 12px; border-bottom: 1px solid var(--line);
+}
+.vrow:last-child { border-bottom: 0; }
+.vswatch { width: 10px; height: 3px; border-radius: 2px; flex: 0 0 auto; }
+.vname { min-width: 190px; font-weight: 600; }
+.vcells { display: flex; flex-wrap: wrap; gap: 14px; color: var(--dim); }
+.vcell.stale { color: #f59e0b; }
+.vcell.dim, .dim { color: var(--dim); }
+
+/* ======================================================= compare mode ==== */
+.arbbar {
+  flex: 0 0 auto; padding: 6px 12px; border-bottom: 1px solid var(--line);
+  background: var(--panel); color: var(--accent); font-weight: 600;
+  white-space: nowrap; overflow-x: auto;
+}
+.arbbar .dim { color: var(--dim); font-weight: 400; }
+.filterbar {
+  flex: 0 0 auto; display: flex; align-items: center; gap: 10px;
+  padding: 6px 12px; border-bottom: 1px solid var(--line); overflow-x: auto;
+}
+.filterbar.hidden { display: none; }
+.panes { flex: 1; min-height: 0; overflow: auto; }
+/* Each book keeps its own panel and its own curve: these books have nothing in
+   common by construction, so nothing here is shared between them. */
+.pane {
+  display: flex; align-items: stretch;
+  border-bottom: 1px solid var(--line);
+  min-height: 300px;
+}
+.pane-side {
+  flex: 0 0 300px; border-right: 1px solid var(--line);
+  background: var(--panel); overflow: auto;
+}
+.pane-head { position: relative; padding: 10px 12px 8px; border-bottom: 1px solid var(--line); }
+.pane-head h2 { margin: 0; font-size: 12px; letter-spacing: .1em; font-weight: 700; }
+.pane-sym { color: var(--accent); font-weight: 600; margin-top: 2px; }
+.pane-x {
+  position: absolute; top: 8px; right: 8px;
+  background: transparent; border: 1px solid var(--line); border-radius: 4px;
+  color: var(--dim); cursor: pointer; width: 22px; height: 22px; line-height: 1; font: inherit;
+}
+.pane-x:hover { color: #ff1744; border-color: #ff1744; }
+.pane-rows { padding: 8px 12px 12px; }
+.prow { display: flex; justify-content: space-between; gap: 12px; padding: 2px 0; }
+.plabel { color: var(--dim); }
+.pvalue { font-weight: 600; }
+.c-bid { color: #00e676; }
+.c-ask { color: #ff1744; }
+.c-cyan { color: #22d3ee; }
+.c-orange { color: #f59e0b; }
+.c-fg { color: var(--fg); }
+[data-theme="light"] .c-bid { color: #0a9b52; }
+[data-theme="light"] .c-ask { color: #d81b3f; }
+.pane-chart { flex: 1; min-width: 0; height: auto; }
+
+@media (max-width: 760px) {
+  .pane { flex-direction: column; min-height: 460px; }
+  .pane-side { flex: 0 0 auto; border-right: 0; border-bottom: 1px solid var(--line); }
+  .pane-chart { min-height: 240px; }
+  .vname { min-width: 0; }
+}

@@ -27,7 +27,7 @@ const b = await chromium.launch({ channel: 'chrome' });
 const shoot = async (name, contextOpts, prepare) => {
   const ctx = await b.newContext(contextOpts);
   const p = await ctx.newPage();
-  await p.goto(`${BASE}/`, { waitUntil: 'networkidle' }).catch((e) => {
+  await p.goto(`${BASE}/single.html`, { waitUntil: 'networkidle' }).catch((e) => {
     console.error(`could not load ${BASE} — is the server up? (${e.message.split('\n')[0]})`);
     process.exit(1);
   });

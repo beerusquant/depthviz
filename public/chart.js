@@ -1,4 +1,4 @@
-import { fmtUsd, panelRows } from '/shared/metrics.js';
+import { fmtUsd, fmtPrice, panelRows } from '/shared/metrics.js';
 
 const THEMES = {
   dark: {
@@ -351,4 +351,164 @@ function drawPanel(ctx, T, px, py, m, meta, L) {
     ctx.fillStyle = colors[c] || T.text;
     ctx.fillText(v, px + 10 + labelW + (L.tiny ? 8 : 12), yy);
   });
+}
+
+// ---------------------------------------------------------------- combined
+
+/**
+ * One colour per venue, distinguishable in both themes and stable across
+ * renders so a venue does not change colour when another one drops out.
+ * Deliberately not the bid/ask green and red: those two mean SIDE everywhere
+ * else in this tool, and reusing them for identity would make a chart where
+ * green means two different things.
+ */
+export const VENUE_COLORS = [
+  '#22d3ee', '#f59e0b', '#a78bfa', '#34d399',
+  '#fb7185', '#60a5fa', '#facc15', '#f472b6',
+];
+export const venueColor = (i) => VENUE_COLORS[i % VENUE_COLORS.length];
+
+/**
+ * Every venue's depth curve on ONE shared price axis.
+ *
+ * The axis is absolute price, not percent-from-mid, and that is the whole point
+ * of the mode: each venue has its own mid, so a percent axis silently aligns
+ * touches that are not at the same price and hides exactly the dislocation
+ * somebody opened this view to see. Plotted against price, a venue quoting ten
+ * basis points away is a curve visibly shifted from the others.
+ *
+ * Each curve is that venue's cumulative notional walking outward from its OWN
+ * touch — bids to the left, asks to the right — which is what the number means.
+ * They are not summed here; `/api/depth/aggregate` is the sum, and it needs the
+ * reference band and the four caveats that come with it.
+ */
+export function drawCombined(canvas, st) {
+  const ctx = canvas.getContext('2d');
+  const dpr = window.devicePixelRatio || 1;
+  const cssW = canvas.clientWidth, cssH = canvas.clientHeight;
+  if (canvas.width !== Math.round(cssW * dpr) || canvas.height !== Math.round(cssH * dpr)) {
+    canvas.width = Math.round(cssW * dpr);
+    canvas.height = Math.round(cssH * dpr);
+  }
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+
+  const T = THEMES[st.theme] || THEMES.dark;
+  ctx.fillStyle = T.bg;
+  ctx.fillRect(0, 0, cssW, cssH);
+
+  const narrow = cssW < 760;
+  const PAD = { l: narrow ? 54 : 78, r: narrow ? 12 : 22, t: 34, b: 34 };
+  const W = cssW - PAD.l - PAD.r;
+  const H = cssH - PAD.t - PAD.b;
+  if (W < 120 || H < 100) return null;
+
+  const rows = (st.rows || []).filter((r) => r.metrics);
+  if (!rows.length) {
+    ctx.textAlign = 'center';
+    ctx.font = '12px ui-monospace, Menlo, monospace';
+    ctx.fillStyle = T.sub;
+    ctx.fillText(st.statusText || 'waiting for books…', PAD.l + W / 2, PAD.t + H / 2);
+    return null;
+  }
+
+  // The price window is the requested range around the MEDIAN of the venue
+  // mids, for the same reason server/aggregate.js uses a median: one stale or
+  // dislocated venue must not drag the axis everything else is drawn against.
+  const mids = rows.map((r) => r.metrics.mid).sort((a, b) => a - b);
+  const ref = mids.length % 2 ? mids[(mids.length - 1) / 2]
+    : (mids[mids.length / 2 - 1] + mids[mids.length / 2]) / 2;
+  const lo = ref * (1 - st.range / 100);
+  const hi = ref * (1 + st.range / 100);
+
+  let yMax = 0;
+  for (const r of rows) {
+    yMax = Math.max(yMax, r.metrics.bid.pts.at(-1)?.[1] || 0, r.metrics.ask.pts.at(-1)?.[1] || 0);
+  }
+  yMax = Math.max(yMax, 1) * 1.08;
+
+  const x = (price) => PAD.l + ((price - lo) / (hi - lo)) * W;
+  const y = (v) => PAD.t + H - (v / yMax) * H;
+
+  // --- grid + axes -------------------------------------------------------
+  const step = tickStep(yMax, narrow ? 4 : 6);
+  ctx.font = `${narrow ? 9 : 10}px ui-monospace, Menlo, monospace`;
+  ctx.textBaseline = 'middle';
+  ctx.strokeStyle = T.grid;
+  ctx.lineWidth = 1;
+  for (let v = 0; v <= yMax; v += step) {
+    const yy = Math.round(y(v)) + 0.5;
+    ctx.beginPath(); ctx.moveTo(PAD.l, yy); ctx.lineTo(PAD.l + W, yy); ctx.stroke();
+    ctx.fillStyle = T.axis;
+    ctx.textAlign = 'right';
+    ctx.fillText(fmtUsd(v), PAD.l - 6, yy);
+  }
+  const xTicks = narrow ? 5 : 9;
+  ctx.textAlign = 'center';
+  for (let i = 0; i <= xTicks; i++) {
+    const p = lo + ((hi - lo) * i) / xTicks;
+    const xx = Math.round(x(p)) + 0.5;
+    ctx.strokeStyle = T.grid;
+    ctx.beginPath(); ctx.moveTo(xx, PAD.t); ctx.lineTo(xx, PAD.t + H); ctx.stroke();
+    ctx.fillStyle = T.axis;
+    ctx.fillText(fmtPrice(p), xx, PAD.t + H + 14);
+  }
+
+  // The reference mid, so the eye has the thing every venue is offset from.
+  const xr = Math.round(x(ref)) + 0.5;
+  ctx.save();
+  ctx.setLineDash([4, 4]);
+  ctx.strokeStyle = T.mid;
+  ctx.globalAlpha = 0.55;
+  ctx.beginPath(); ctx.moveTo(xr, PAD.t); ctx.lineTo(xr, PAD.t + H); ctx.stroke();
+  ctx.restore();
+  ctx.fillStyle = T.sub;
+  ctx.textAlign = 'center';
+  ctx.fillText('REF MID', xr, PAD.t - 10);
+
+  // --- one curve per venue ----------------------------------------------
+  ctx.save();
+  ctx.beginPath();
+  ctx.rect(PAD.l, PAD.t, W, H);
+  ctx.clip();
+  ctx.lineWidth = 1.6;
+  ctx.lineJoin = 'round';
+  for (const r of rows) {
+    const m = r.metrics;
+    ctx.strokeStyle = r.color;
+    // Bids walk left from this venue's own touch, asks walk right. Two strokes,
+    // one colour: the identity is the venue, the direction is the side.
+    for (const pts of [m.bid.pts, m.ask.pts]) {
+      ctx.beginPath();
+      let started = false;
+      for (const [pct, cum] of pts) {
+        // `pct` is signed distance from THIS venue's mid; back to a price so
+        // every curve lands on the shared axis where it actually is.
+        const px = m.mid * (1 + pct / 100);
+        const xx = x(px), yy = y(cum);
+        if (!started) { ctx.moveTo(xx, yy); started = true; } else ctx.lineTo(xx, yy);
+      }
+      if (started) ctx.stroke();
+    }
+  }
+  ctx.restore();
+
+  // --- legend ------------------------------------------------------------
+  ctx.textAlign = 'left';
+  ctx.textBaseline = 'middle';
+  ctx.font = `${narrow ? 9 : 10}px ui-monospace, Menlo, monospace`;
+  let lx = PAD.l;
+  const ly = 14;
+  for (const r of rows) {
+    const label = `${r.label}${r.metrics.lowerBound?.totalDepth ? ' ≥' : ''}`;
+    const w = ctx.measureText(label).width + 18;
+    if (lx + w > PAD.l + W) break;
+    ctx.strokeStyle = r.color;
+    ctx.lineWidth = 2;
+    ctx.beginPath(); ctx.moveTo(lx, ly); ctx.lineTo(lx + 10, ly); ctx.stroke();
+    ctx.fillStyle = T.sub;
+    ctx.fillText(label, lx + 14, ly);
+    lx += w;
+  }
+
+  return { lo, hi, ref, x, y };
 }

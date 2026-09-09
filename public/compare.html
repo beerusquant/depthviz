@@ -1,0 +1,59 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Depthviz — Compare Mode</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' fill='%2307080a'/%3E%3Crect x='2' y='6' width='5' height='8' fill='%2300e676'/%3E%3Crect x='9' y='3' width='5' height='11' fill='%23ff1744'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<header class="bar">
+  <a class="brand" href="/" title="All modes">DEPTHVIZ<span class="brand-sub">COMPARE</span></a>
+
+  <div class="group grow" id="add-g">
+    <span class="lbl">ADD</span>
+    <select class="btn pick" id="add-ex"></select>
+    <select class="btn pick" id="add-mk">
+      <option value="spot">SPOT</option>
+      <option value="perp">PERPS</option>
+    </select>
+    <div class="picker grow">
+      <input id="add-sym" class="sym-input" placeholder="Search symbol…" autocomplete="off" spellcheck="false">
+      <div class="menu sym-menu" id="add-menu"></div>
+    </div>
+    <button class="btn" id="add-btn">+ ADD BOOK</button>
+    <span class="pairs" id="add-count">—</span>
+  </div>
+
+  <div class="group" id="range-g">
+    <span class="lbl">RANGE</span>
+    <div class="seg" id="range">
+      <button class="seg-b" data-range="0.1">&pm;0.1%</button>
+      <button class="seg-b" data-range="0.5">&pm;0.5%</button>
+      <button class="seg-b active" data-range="2">&pm;2%</button>
+      <button class="seg-b" data-range="5">&pm;5%</button>
+      <button class="seg-b" data-range="10">&pm;10%</button>
+    </div>
+  </div>
+
+  <div class="group right">
+    <button class="btn icon" id="theme" title="Toggle theme">&#9728;</button>
+    <button class="btn" id="copy">&#10697; COPY</button>
+  </div>
+</header>
+
+<div class="arbbar" id="arbbar">&rsaquo; <span id="arb-text">no comparable pair yet</span></div>
+
+<div class="filterbar" id="filterbar">
+  <span class="lbl">BOOKS</span>
+  <div class="seg" id="filter"></div>
+</div>
+
+<main id="panes" class="panes"></main>
+
+<div id="toast" class="toast"></div>
+
+<script type="module" src="compare.js"></script>
+</body>
+</html>

@@ -127,6 +127,25 @@ gets. The reduction is exact in cumulative notional, quantity and VWAP at ±2%,
 BTC walk to"* is answerable only from the raw book. Which one the figures came
 from is stated in `metricsFrom` rather than left to be worked out.
 
+### Three modes
+
+`/` is a chooser. **Single** is one exchange and one ticker with the full panel.
+**Combined** is one ticker across every venue that lists it, all the curves on
+one **absolute price** axis — not percent-from-mid, because a percent axis lines
+up touches that are not at the same price and hides the dislocation the mode
+exists to show. **Compare** is any books stacked, each with its own panel and
+curve: different assets, different quotes, spot against perp, up to the server's
+per-client ceiling of twelve.
+
+Neither of the two new modes sums anything on screen. A total needs a reference
+band and four caveats, which is what `/api/depth/aggregate` is for; combined
+mode uses that route only to resolve which symbol each venue lists for the asset
+— and shows what it resolved, since `BTC` is `BTCUSDT` on Binance, `BTC-USDT` on
+OKX and `BTC` on Hyperliquid. Compare mode's arbitrage line is a **mid-to-mid**
+difference between books of the same asset, and says so: it ignores the spread
+each side would cross, the fees, and states it when the two books settle in
+different currencies or were read seconds apart.
+
 ### Across venues
 
 One venue at a time is not the question a market maker asks. `/api/depth/aggregate`
@@ -204,11 +223,15 @@ server/aggregate.js the cross-venue sum — pure, so the four ways it goes wrong
 server/adapters/    one file per venue + diff-book.js, the engine five feeds share
 server/adapters/contract.js   what an adapter is, asserted at import rather than remembered
 shared/metrics.js   every number on screen and in /api/depth — one implementation
-public/state.js     what the page knows, and the one way anything asks to be redrawn
-public/feed.js      the websocket to this server, its reconnects, and nothing else
+public/index.html   the mode chooser
+public/state.js     what a page knows, and the one way anything asks to be redrawn
+public/feed.js      one websocket carrying one book — a factory, because two modes hold several
 public/menus.js     the two dropdowns and the ranking that makes the symbol one usable
-public/app.js       what is drawn, what the controls do, and the wiring
-public/chart.js     the canvas: curves, axes, crosshair, panel
+public/theme.js     the stored theme, shared by all four pages
+public/app.js       single mode
+public/combined.js  combined mode: one ticker, every venue, one price axis
+public/compare.js   compare mode: arbitrary books, stacked
+public/chart.js     the canvas: draw() for one book, drawCombined() for many
 tools/              the proofs: unit tests, recorded venue fixtures, live verifiers, smoke tests
 tools/record.mjs    the tape: raw books to JSONL, so a threshold can be re-derived rather than believed
 docs/               the long-form documentation

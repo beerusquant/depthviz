@@ -1,0 +1,56 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Depthviz — Combined Mode</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' fill='%2307080a'/%3E%3Crect x='2' y='6' width='5' height='8' fill='%2300e676'/%3E%3Crect x='9' y='3' width='5' height='11' fill='%23ff1744'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<header class="bar">
+  <a class="brand" href="/" title="All modes">DEPTHVIZ<span class="brand-sub">COMBINED</span></a>
+
+  <div class="group">
+    <span class="lbl">MARKET</span>
+    <div class="seg" id="market">
+      <button class="seg-b active" data-market="spot">SPOT</button>
+      <button class="seg-b" data-market="perp">PERPS</button>
+    </div>
+  </div>
+
+  <div class="group grow">
+    <span class="lbl">ASSET</span>
+    <input id="base-input" class="sym-input" value="BTC" placeholder="BTC" autocomplete="off" spellcheck="false" size="8">
+    <span class="pairs" id="resolved">—</span>
+  </div>
+
+  <div class="group" id="range-g">
+    <span class="lbl">RANGE</span>
+    <div class="seg" id="range">
+      <button class="seg-b" data-range="0.1">&pm;0.1%</button>
+      <button class="seg-b" data-range="0.5">&pm;0.5%</button>
+      <button class="seg-b active" data-range="2">&pm;2%</button>
+      <button class="seg-b" data-range="5">&pm;5%</button>
+      <button class="seg-b" data-range="10">&pm;10%</button>
+    </div>
+  </div>
+
+  <div class="group right">
+    <span class="live" id="live"><i class="dot"></i><b id="live-b">CONNECTING</b><span id="live-s"></span></span>
+    <button class="btn icon" id="theme" title="Toggle theme">&#9728;</button>
+    <button class="btn" id="copy">&#10697; COPY</button>
+  </div>
+</header>
+
+<main id="stage" class="stage-combined">
+  <canvas id="chart"></canvas>
+  <div id="note" class="note hidden"></div>
+  <div id="rows" class="vrows"></div>
+</main>
+
+<div id="toast" class="toast"></div>
+
+<script type="module" src="combined.js"></script>
+</body>
+</html>

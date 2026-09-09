@@ -515,19 +515,39 @@ A change that was not executed does not exist. Depending on what you touch:
 | an adapter, a unit conversion | `node tools/test-adapters.mjs` (deterministic, replays recorded frames), **then** `npm run crosscheck` **and** `node tools/verify-conversions.mjs` |
 | Bitunix (absent from ccxt) | `npm run verify:bitunix` |
 | `reconnectingWs`, a socket's lifecycle | `node tools/test-reconnect.mjs` — both halves: a dead path is dropped, a quiet-but-answering one is not |
-| the UI, the layout, the transport | `node tools/smoke-feeds.mjs`, and `smoke-ui.mjs` if the rendering moves |
+| the UI, the layout, the transport | `node tools/smoke-feeds.mjs`, and `smoke-ui.mjs` if the rendering moves — it drives all three modes, and a mode nobody drives is a mode that breaks silently |
 | `shared/metrics.js`, `/api/depth` | `npm test` **and** a `curl` of the route — the browser and the API share one implementation, so a change to it moves both |
 
 `smoke-feeds.mjs` prints a `clock=` column per venue: `venue+NNms` where the
 exchange stamps its frames, `none` where it does not. A venue that silently stops
 stamping shows up there.
 
-The front end is four modules and the graph is a tree — `app.js` depends on
-`state.js`, `feed.js`, `menus.js` and `chart.js`; those depend only on `state.js`.
-A cycle here is not a style problem: it is how a module ends up half-initialised
-at first use — the same class as the temporal dead zone that once silently
-killed every line of a page's script after one line, with the page still
-loading and streaming.
+The front end is a tree, and it has to stay one: `app.js`, `combined.js` and
+`compare.js` are three leaves depending on `state.js`, `feed.js`, `menus.js`,
+`theme.js` and `chart.js`; none of those depends on a page. A cycle here is not
+a style problem — it is how a module ends up half-initialised at first use, the
+same class as the temporal dead zone that once silently killed every line of a
+page's script after one line, with the page still loading and streaming.
+
+**`/` is the mode chooser, not the chart.** Single mode lives at
+`/single.html`, and `smoke-ui.mjs` and `shoot.mjs` were both pointed at the root
+— a tool that kept doing so would have smoke-tested a page with no chart on it
+and called the app healthy, which is §4's lesson with a different hardcoded
+value.
+
+**N books means N sockets.** The server's websocket protocol holds ONE
+subscription per socket, so combined and compare open one connection per book
+rather than extending the protocol — which would have touched the hub, the quota
+accounting and the conformance suite to buy nothing the existing ceilings do not
+already allow. `feed.js` is a factory for that reason, and `compare.js` states
+the twelve-book ceiling as the server's `DEPTHVIZ_MAX_FEEDS_PER_CLIENT` rather
+than discovering it as an error with no explanation.
+
+**Combined plots absolute price, never percent-from-mid.** Every venue has its
+own mid, so a percent axis lands every touch on the same vertical line and hides
+exactly the dislocation somebody opened that view to find. And neither new mode
+sums anything: a total needs the reference band and the four caveats, which is
+what `/api/depth/aggregate` is for.
 
 `smoke-ui.mjs` ends with a mobile pass (390x844 and rotated) that asserts reach,
 not looks: no sideways scroll, every control on screen and tall enough for a

@@ -1,11 +1,14 @@
 import { computeMetrics, panelRows } from '/shared/metrics.js';
 import { draw } from './chart.js';
 import { $, state, invalidate, exOf, exName } from './state.js';
-import { connect, subscribe } from './feed.js';
+import { createFeed } from './feed.js';
+import { applyTheme as storeTheme } from './theme.js';
 import { closeMenu, closeAllMenus, renderExchangeMenu, renderSymbolMenu } from './menus.js';
 
 /**
- * The page: what it draws, what its controls do, and how it is wired up.
+ * Single mode: one exchange, one ticker, the full depth curve.
+ *
+ * What it draws, what its controls do, and how it is wired up.
  *
  * The three things this file does NOT do are the reason the rest of it is
  * readable — `state.js` holds the facts, `feed.js` owns the socket and its
@@ -15,6 +18,17 @@ import { closeMenu, closeAllMenus, renderExchangeMenu, renderSymbolMenu } from '
  */
 
 const canvas = $('chart');
+
+// One book here, so one feed. `feed.js` is a factory because combined and
+// compare mode hold several at once.
+let feed = null;
+const subscribe = () => {
+  if (!state.symbol) return;
+  feed?.subscribe({
+    exchange: state.exchange, market: state.market,
+    symbol: state.symbol, range: state.range,
+  });
+};
 
 // ---------------------------------------------------------------- rendering
 
@@ -275,7 +289,17 @@ async function init() {
   state.catalog = await (await fetch('/api/catalog')).json();
   renderExchangeMenu(setExchange);
   $('ex-label').textContent = `${exName()} [${state.market.toUpperCase()}]`;
-  connect(setStatus);
+  feed = createFeed({
+    onBook: (b) => {
+      state.book = b;
+      state.bookSeq++;
+      state.vol24h = b.vol24h;
+      state.volTs = b.volTs;
+      if (state.status !== 'live') setStatus('live');
+      invalidate();
+    },
+    onStatus: (st, detail) => setStatus(st, detail),
+  });
   await loadSymbols();
   requestAnimationFrame(frame);
 }
@@ -319,8 +343,7 @@ $('sym-input').onblur = () => setTimeout(() => { closeMenu($('sym-menu')); $('sy
 document.addEventListener('click', closeAllMenus);
 
 $('theme').onclick = () => {
-  state.theme = state.theme === 'dark' ? 'light' : 'dark';
-  localStorage.setItem('depthviz.theme', state.theme);
+  state.theme = storeTheme(state.theme === 'dark' ? 'light' : 'dark');
   applyTheme();
 };
 

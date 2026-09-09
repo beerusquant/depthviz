@@ -32,7 +32,8 @@ export const state = {
   metrics: null,
   status: 'connecting',
   statusDetail: '',
-  theme: localStorage.getItem('depthviz.theme') || 'dark',
+  // Shared across all four pages; see theme.js.
+  theme: (() => { try { return localStorage.getItem('depthviz.theme') || 'dark'; } catch { return 'dark'; } })(),
   hover: null,
   dirty: true,
 };
